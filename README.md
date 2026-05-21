@@ -1,13 +1,13 @@
-# @plural/mpp-seller-sdk
+# @pinelabs-online/mpp-seller-sdk
 
-TypeScript SDK for Plural MPP seller integrations. It generates signed payment
+TypeScript SDK for pinelabs-online MPP seller integrations. It generates signed payment
 challenges, verifies `Payment` credentials, captures payment through MPP debit,
 and builds `Payment-Receipt` headers.
 
 ## Install
 
 ```bash
-npm install @plural/mpp-seller-sdk
+npm install @pinelabs-online/mpp-seller-sdk
 ```
 
 Requires Node.js `>=18` or another runtime with `fetch`, `AbortSignal.timeout`,
@@ -18,12 +18,12 @@ and standard Web APIs.
 The SDK is split into small modules and exposed through npm subpath exports:
 
 ```ts
-import { PluralMPP } from "@plural/mpp-seller-sdk";
-import { PluralMPP as Server } from "@plural/mpp-seller-sdk/server";
-import { decidePayment } from "@plural/mpp-seller-sdk/server/middleware";
-import { MppEnvironment } from "@plural/mpp-seller-sdk/config";
-import type { PluralSellerConfig, PaymentDecision } from "@plural/mpp-seller-sdk/types";
-import { buildReceiptHeader } from "@plural/mpp-seller-sdk/utils";
+import { pinelabs-online MPP } from "@pinelabs-online/mpp-seller-sdk";
+import { pinelabs-online MPP as Server } from "@pinelabs-online/mpp-seller-sdk/server";
+import { decidePayment } from "@pinelabs-online/mpp-seller-sdk/server/middleware";
+import { MppEnvironment } from "@pinelabs-online/mpp-seller-sdk/config";
+import type { pinelabs-onlineSellerConfig, PaymentDecision } from "@pinelabs-online/mpp-seller-sdk/types";
+import { buildReceiptHeader } from "@pinelabs-online/mpp-seller-sdk/utils";
 ```
 
 Use the root import for most applications. Use subpath imports when building
@@ -32,9 +32,9 @@ framework adapters or services with stricter module ownership.
 ## Quick Start
 
 ```ts
-import { Amount, ChargeOptions, MppEnvironment, PluralMPP } from "@plural/mpp-seller-sdk";
+import { Amount, ChargeOptions, MppEnvironment, pinelabs-onlineMPP } from "@pinelabs-online/mpp-seller-sdk";
 
-const mpp = PluralMPP.create({
+const mpp = pinelabs-onlineMPP.create({
   clientId: "seller-client-id",
   clientSecret: "seller-client-secret",
   challengeSecretKey: "shared-secret",
@@ -50,9 +50,9 @@ const challenge = await mpp.generateChallenge(
 ## Configuration
 
 ```ts
-const mpp = PluralMPP.create({
-  clientId: process.env.PLURAL_CLIENT_ID!,
-  clientSecret: process.env.PLURAL_CLIENT_SECRET!,
+const mpp = pinelabs-online MPP.create({
+  clientId: process.env.pinelabs-online_CLIENT_ID!,
+  clientSecret: process.env.pinelabs-online_CLIENT_SECRET!,
   challengeSecretKey: process.env.MPP_CHALLENGE_SECRET!,
   realm: MppEnvironment.SANDBOX,
   baseUrl: MppEnvironment.SANDBOX,
@@ -61,7 +61,7 @@ const mpp = PluralMPP.create({
 });
 ```
 
-`baseUrl` is the Plural MPP base URL. Authentication always uses
+`baseUrl` is the pinelabs-online MPP base URL. Authentication always uses
 `POST /api/auth/v1/token`; the same base URL can route that call internally to
 your central Keycloak-backed auth service.
 
@@ -78,7 +78,7 @@ is enabled and verification fails.
 ## Generic Middleware Flow
 
 ```ts
-import { Amount, ChargeOptions, decidePayment } from "@plural/mpp-seller-sdk";
+import { Amount, ChargeOptions, decidePayment } from "@pinelabs-online/mpp-seller-sdk";
 
 const decision = await decidePayment({
   authorizationHeader: request.headers.get("authorization") ?? undefined,
