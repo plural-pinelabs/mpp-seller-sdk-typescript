@@ -1,0 +1,77 @@
+{
+  "name": "@plural/mpp-seller-sdk",
+  "version": "0.1.0",
+  "description": "Plural MPP Seller SDK - x402 Machine Payments Protocol server middleware (TypeScript)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mishrasanjeev/agentic-org.git"
+  },
+  "keywords": [
+    "mpp",
+    "x402",
+    "payment",
+    "seller",
+    "plural",
+    "upi",
+    "sbmd",
+    "machine-payments"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "require": "./dist/server/index.js",
+      "default": "./dist/server/index.js"
+    },
+    "./server/middleware": {
+      "types": "./dist/server/middleware/index.d.ts",
+      "require": "./dist/server/middleware/index.js",
+      "default": "./dist/server/middleware/index.js"
+    },
+    "./config": {
+      "types": "./dist/config/index.d.ts",
+      "require": "./dist/config/index.js",
+      "default": "./dist/config/index.js"
+    },
+    "./types": {
+      "types": "./dist/types/index.d.ts",
+      "require": "./dist/types/index.js",
+      "default": "./dist/types/index.js"
+    },
+    "./utils": {
+      "types": "./dist/utils/index.d.ts",
+      "require": "./dist/utils/index.js",
+      "default": "./dist/utils/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^5.7.0"
+  }
+}
