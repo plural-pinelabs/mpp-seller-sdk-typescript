@@ -1,13 +1,13 @@
-# @pinelabs-online/mpp-seller-sdk
+# @pinelabs-online/mpp-server-sdk
 
-TypeScript SDK for pinelabs-online MPP seller integrations. It generates signed payment
+TypeScript SDK for pinelabs-online MPP server integrations. It generates signed payment
 challenges, verifies `Payment` credentials, captures payment through MPP debit,
 and builds `Payment-Receipt` headers.
 
 ## Install
 
 ```bash
-npm install @pinelabs-online/mpp-seller-sdk
+npm install @pinelabs-online/mpp-server-sdk
 ```
 
 Requires Node.js `>=18` or another runtime with `fetch`, `AbortSignal.timeout`,
@@ -18,12 +18,12 @@ and standard Web APIs.
 The SDK is split into small modules and exposed through npm subpath exports:
 
 ```ts
-import { pinelabs-online MPP } from "@pinelabs-online/mpp-seller-sdk";
-import { pinelabs-online MPP as Server } from "@pinelabs-online/mpp-seller-sdk/server";
-import { decidePayment } from "@pinelabs-online/mpp-seller-sdk/server/middleware";
-import { MppEnvironment } from "@pinelabs-online/mpp-seller-sdk/config";
-import type { pinelabs-onlineSellerConfig, PaymentDecision } from "@pinelabs-online/mpp-seller-sdk/types";
-import { buildReceiptHeader } from "@pinelabs-online/mpp-seller-sdk/utils";
+import { pinelabs-online MPP } from "@pinelabs-online/mpp-server-sdk";
+import { pinelabs-online MPP as Server } from "@pinelabs-online/mpp-server-sdk/server";
+import { decidePayment } from "@pinelabs-online/mpp-server-sdk/server/middleware";
+import { MppEnvironment } from "@pinelabs-online/mpp-server-sdk/config";
+import type { pinelabs-onlineserverConfig, PaymentDecision } from "@pinelabs-online/mpp-server-sdk/types";
+import { buildReceiptHeader } from "@pinelabs-online/mpp-server-sdk/utils";
 ```
 
 Use the root import for most applications. Use subpath imports when building
@@ -32,11 +32,11 @@ framework adapters or services with stricter module ownership.
 ## Quick Start
 
 ```ts
-import { Amount, ChargeOptions, MppEnvironment, pinelabs-onlineMPP } from "@pinelabs-online/mpp-seller-sdk";
+import { Amount, ChargeOptions, MppEnvironment, pinelabs-onlineMPP } from "@pinelabs-online/mpp-server-sdk";
 
 const mpp = pinelabs-onlineMPP.create({
-  clientId: "seller-client-id",
-  clientSecret: "seller-client-secret",
+  clientId: "server-client-id",
+  clientSecret: "server-client-secret",
   challengeSecretKey: "shared-secret",
   realm: MppEnvironment.SANDBOX,
   baseUrl: MppEnvironment.SANDBOX,
@@ -71,14 +71,14 @@ needs an explicit merchant header, add it only in that test harness or adapter.
 
 For Grantex grant verification, configure `grantex.jwksUrl` with
 `https://grantex.dev/.well-known/jwks.json` or the base URL
-`https://grantex.dev`. The seller middleware verifies RS256 signatures offline,
+`https://grantex.dev`. The server middleware verifies RS256 signatures offline,
 checks expiry and required scopes, and returns `grant_invalid` when enforcement
 is enabled and verification fails.
 
 ## Generic Middleware Flow
 
 ```ts
-import { Amount, ChargeOptions, decidePayment } from "@pinelabs-online/mpp-seller-sdk";
+import { Amount, ChargeOptions, decidePayment } from "@pinelabs-online/mpp-server-sdk";
 
 const decision = await decidePayment({
   authorizationHeader: request.headers.get("authorization") ?? undefined,
