@@ -3,15 +3,14 @@ export type FetchLike = (input: string | URL | Request, init?: RequestInit) => P
 
 export const PAYMENT_HEADER_PREFIX = "Payment ";
 export const PAYMENT_RECEIPT_PREFIX = "Payment ";
-export const GRANTEX_TOKEN_HEADER = "X-Grantex-Token";
 
 /** Logger interface used by SDK internals for retry/auth/payment diagnostics. */
 export interface MppLogger {
   /** Low-volume diagnostic event, usually before a request or decision. */
   debug(message: string, context?: Record<string, unknown>): void;
-  /** Informational event such as retries, auth refreshes, capture results, and grant checks. */
+  /** Informational event such as retries, auth refreshes, and capture results. */
   info(message: string, context?: Record<string, unknown>): void;
-  /** Error event for failed auth, network, credential, grant, or capture operations. */
+  /** Error event for failed auth, network, credential, or capture operations. */
   error(message: string, context?: Record<string, unknown>): void;
 }
 
@@ -43,42 +42,6 @@ export class ChargeOptions {
   ) {}
 }
 
-/** Seller-side Grantex verification settings. */
-export interface SellerGrantexConfig {
-  /** JWKS endpoint or base Grantex URL. Base URLs are normalized to `/.well-known/jwks.json`. */
-  jwksUrl: string;
-  /** How long fetched JWKS keys remain cached in memory. Defaults to one hour. */
-  jwksCacheTtlMs?: number;
-  /** Grant scopes the seller requires before allowing capture. */
-  requiredScopes?: string[];
-  /** When true, missing or invalid Grantex tokens return 403 instead of logging only. */
-  enforceGrant?: boolean;
-}
-
-/** Verified Grantex JWT claims seen by the seller SDK. */
-export interface GrantTokenClaims {
-  iss: string;
-  sub: string;
-  agt: string;
-  scp: string[];
-  grnt: string;
-  iat: number;
-  exp: number;
-  dev?: string;
-  nbf?: number;
-  parentAgt?: string;
-  parentGrnt?: string;
-  delegationDepth?: number;
-  raw: Record<string, unknown>;
-}
-
-/** Result of seller-side Grantex token verification. */
-export interface GrantVerificationResult {
-  valid: boolean;
-  claims?: GrantTokenClaims;
-  error?: string;
-}
-
 /** Configuration required to construct a seller SDK instance. */
 export interface PluralSellerConfig {
   /** Client id used for `POST /api/auth/v1/token` unless `accessToken` is supplied. */
@@ -99,10 +62,8 @@ export interface PluralSellerConfig {
   maxRetries?: number;
   /** Initial exponential-backoff retry delay in milliseconds. Defaults to 500. */
   initialRetryDelayMs?: number;
-  /** Optional logger for request, retry, auth, capture, and grant diagnostics. */
+  /** Optional logger for request, retry, auth, and capture diagnostics. */
   logger?: MppLogger;
-  /** Optional seller-side Grantex verification settings. */
-  grantex?: SellerGrantexConfig;
   /** Pre-issued bearer token. When supplied, the SDK skips client-credential exchange. */
   accessToken?: string;
   /** Custom fetch implementation for tests or non-standard runtimes. */
@@ -226,12 +187,12 @@ export interface ReceiptData {
 /** Decision returned by seller middleware helpers for a paid-resource request. */
 export interface PaymentDecision {
   /** Adapter action: challenge, reject, capture error, or proceed. */
-  action: "challenge" | "invalid" | "failed" | "grant_required" | "grant_invalid" | "error" | "proceed";
+  action: "challenge" | "invalid" | "failed" | "error" | "proceed";
   /** HTTP status the framework adapter should return for non-proceed actions. */
   status: number;
   /** Response headers such as `WWW-Authenticate`, `Payment-Receipt`, or content type. */
   headers: Record<string, string>;
-  /** Problem Details body for challenge, invalid, failed, or grant rejection actions. */
+  /** Problem Details body for challenge, invalid, failed, or capture error actions. */
   problemDetails?: ProblemDetails | Record<string, unknown>;
   /** Captured MPP debit result when `action` is `proceed`. */
   captureResult?: CaptureResult;

@@ -1,6 +1,5 @@
 import {
   ChargeOptions,
-  GRANTEX_TOKEN_HEADER,
   MppCaptureError,
   PaymentDecision,
   PAYMENT_HEADER_PREFIX,
@@ -12,12 +11,10 @@ import { buildReceiptHeader } from "../../utils/receipt-builder";
 import { CaptureClient } from "../capture-client";
 import { ChallengeGenerator } from "../challenge-generator";
 import { CredentialVerifier } from "../credential-verifier";
-import { GrantTokenVerifier } from "../grant-token-verifier";
 
 /** Decide how a seller route should respond to an incoming paid-resource request. */
 export async function decidePayment(options: {
   authorizationHeader?: string;
-  grantexTokenHeader?: string;
   config: PluralSellerConfig;
   chargeOptions: ChargeOptions;
 }): Promise<PaymentDecision> {
@@ -39,43 +36,6 @@ export async function decidePayment(options: {
       detail: verification.error ?? "The payment credential could not be verified.",
       challengeId: result.challenge.id,
     });
-  }
-
-  if (options.config.grantex?.enforceGrant === true && !options.grantexTokenHeader) {
-    return {
-      action: "grant_required",
-      status: 403,
-      headers: { "Content-Type": "application/problem+json" },
-      problemDetails: {
-        type: "urn:ietf:rfc:9725:error:grant-required",
-        title: "Grant Token Required",
-        status: 403,
-        detail: `A valid Grantex grant token is required in the ${GRANTEX_TOKEN_HEADER} header.`,
-      },
-    };
-  }
-  if (options.config.grantex && options.grantexTokenHeader) {
-    const grantResult = await new GrantTokenVerifier(options.config.grantex, options.config.fetch).verify(options.grantexTokenHeader);
-    if (!grantResult.valid) {
-      if (options.config.grantex.enforceGrant === true) {
-        return {
-          action: "grant_invalid",
-          status: 403,
-          headers: { "Content-Type": "application/problem+json" },
-          problemDetails: {
-            type: "urn:ietf:rfc:9725:error:grant-invalid",
-            title: "Invalid Grant Token",
-            status: 403,
-            detail: grantResult.error ?? "The grant token could not be verified.",
-          },
-        };
-      }
-      try {
-        options.config.logger?.info("Grantex token verification failed (non-enforcing)", { error: grantResult.error });
-      } catch {
-        // Logging failures are non-fatal.
-      }
-    }
   }
 
   try {
