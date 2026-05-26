@@ -1,12 +1,4 @@
-import {
-  CaptureOptions,
-  CaptureResult,
-  ChallengeResult,
-  ChargeOptions,
-  PluralSellerConfig,
-  ReceiptData,
-  VerificationResult,
-} from "../types";
+import { CaptureOptions, CaptureResult, ChallengeResult, ChargeOptions, PluralSellerConfig, ReceiptData, VerificationResult } from "../types";
 import { buildReceiptData, buildReceiptHeader } from "../utils/receipt-builder";
 import { validateConfig } from "../utils/validation";
 import { CaptureClient } from "./capture-client";

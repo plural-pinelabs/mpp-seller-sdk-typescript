@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import test from "node:test";
 
 import {
@@ -37,6 +37,29 @@ function requestHash(value) {
   return createHash("sha256").update(body).digest("hex");
 }
 
+function createGrantFixture(claimOverrides = {}) {
+  const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const publicJwk = publicKey.export({ format: "jwk" });
+  publicJwk.kid = "test-grantex-key";
+  publicJwk.alg = "RS256";
+  publicJwk.use = "sig";
+  const now = Math.floor(Date.now() / 1000);
+  const header = encodeJson({ alg: "RS256", typ: "JWT", kid: publicJwk.kid });
+  const payload = encodeJson({
+    iss: "https://grantex.dev",
+    sub: "user_123",
+    agt: "buyer-client",
+    scp: ["mpp:payment:initiate"],
+    grnt: "grnt_123",
+    iat: now,
+    exp: now + 3600,
+    ...claimOverrides,
+  });
+  const signingInput = `${header}.${payload}`;
+  const signature = sign("RSA-SHA256", Buffer.from(signingInput), privateKey).toString("base64url");
+  return { grantToken: `${signingInput}.${signature}`, publicJwk };
+}
+
 test("generates and verifies signed payment credentials", async () => {
   const mpp = PluralMPP.create(config(globalThis.fetch));
   const challenge = await mpp.generateChallenge(
@@ -59,6 +82,7 @@ test("generates and verifies signed payment credentials", async () => {
 test("decidePayment returns a 402 challenge when no credential is present", async () => {
   const decision = await decidePayment({
     authorizationHeader: undefined,
+    grantexTokenHeader: undefined,
     config: config(globalThis.fetch),
     chargeOptions: new ChargeOptions(new Amount(100, "INR"), "/rides/confirm"),
   });
@@ -120,6 +144,7 @@ test("decidePayment captures payment through central auth and MPP debit", async 
 
   const decision = await decidePayment({
     authorizationHeader: credentialHeader,
+    grantexTokenHeader: undefined,
     config: config(fetchImpl),
     chargeOptions: new ChargeOptions(new Amount(100, "INR"), "/rides/confirm"),
   });
@@ -130,6 +155,112 @@ test("decidePayment captures payment through central auth and MPP debit", async 
     calls.map((call) => call.path),
     ["/api/auth/v1/token", "/mpp/v1/debit"],
   );
+});
+
+test("decidePayment verifies Grantex grants through grantex.dev JWKS before capture", async () => {
+  const { grantToken, publicJwk } = createGrantFixture();
+  const calls = [];
+  const fetchImpl = async (input, init = {}) => {
+    const url = String(input);
+    const parsed = new URL(url);
+    calls.push({ path: parsed.pathname, init });
+
+    if (parsed.pathname === "/.well-known/jwks.json") {
+      return response(200, { keys: [publicJwk] });
+    }
+
+    if (parsed.pathname === "/api/auth/v1/token") {
+      return response(200, { data: { access_token: "seller-access-token", expires_in: 3600 } });
+    }
+
+    if (parsed.pathname === "/mpp/v1/debit") {
+      return response(200, {
+        data: {
+          type: "SBMD",
+          authorization_id: "mnd_test",
+          payment_id: "pay_123",
+          amount: "100",
+          currency: "INR",
+          status: "CONFIRMED",
+          metadata: { external_capture_id: "cap_123" },
+        },
+      });
+    }
+
+    return response(404, { error: "not found" });
+  };
+
+  const grantexConfig = {
+    ...config(fetchImpl),
+    grantex: {
+      jwksUrl: "https://grantex.dev",
+      requiredScopes: ["mpp:payment:initiate"],
+      enforceGrant: true,
+    },
+  };
+  const generated = await PluralMPP.create(grantexConfig).generateChallenge(
+    new ChargeOptions(new Amount(100, "INR"), "/rides/confirm"),
+  );
+  const credentialHeader = `Payment ${Buffer.from(
+    JSON.stringify({
+      challenge: generated.challenge,
+      source: "buyer-client",
+      payload: { type: "token", token: "MPP_TOK_123", customer_reference: "cust-ref-123" },
+    }),
+  ).toString("base64url")}`;
+
+  const decision = await decidePayment({
+    authorizationHeader: credentialHeader,
+    grantexTokenHeader: grantToken,
+    config: grantexConfig,
+    chargeOptions: new ChargeOptions(new Amount(100, "INR"), "/rides/confirm"),
+  });
+
+  assert.equal(decision.action, "proceed");
+  assert.deepEqual(
+    calls.map((call) => call.path),
+    ["/.well-known/jwks.json", "/api/auth/v1/token", "/mpp/v1/debit"],
+  );
+});
+
+test("decidePayment rejects invalid Grantex grants when enforcement is enabled", async () => {
+  const { grantToken, publicJwk } = createGrantFixture({ scp: ["mpp:mandate:read"] });
+  const fetchImpl = async (input) => {
+    const parsed = new URL(String(input));
+    if (parsed.pathname === "/.well-known/jwks.json") {
+      return response(200, { keys: [publicJwk] });
+    }
+    return response(404, { error: "not found" });
+  };
+  const grantexConfig = {
+    ...config(fetchImpl),
+    grantex: {
+      jwksUrl: "https://grantex.dev",
+      requiredScopes: ["mpp:payment:initiate"],
+      enforceGrant: true,
+    },
+  };
+  const generated = await PluralMPP.create(grantexConfig).generateChallenge(
+    new ChargeOptions(new Amount(100, "INR"), "/rides/confirm"),
+  );
+  const credentialHeader = `Payment ${Buffer.from(
+    JSON.stringify({
+      challenge: generated.challenge,
+      source: "buyer-client",
+      payload: { type: "token", token: "MPP_TOK_123", customer_reference: "cust-ref-123" },
+    }),
+  ).toString("base64url")}`;
+
+  const decision = await decidePayment({
+    authorizationHeader: credentialHeader,
+    grantexTokenHeader: grantToken,
+    config: grantexConfig,
+    chargeOptions: new ChargeOptions(new Amount(100, "INR"), "/rides/confirm"),
+  });
+
+  assert.equal(decision.action, "grant_invalid");
+  assert.equal(decision.status, 403);
+  assert.match(decision.problemDetails.detail, /Missing required scope/);
 });
 
 test("buildReceiptHeader encodes settlement data", () => {

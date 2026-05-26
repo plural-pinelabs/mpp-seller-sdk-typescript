@@ -12,6 +12,7 @@ test("seller package exposes modular entry points", async () => {
   assert.equal(typeof root.PluralMPP.create, "function");
   assert.equal(server.PluralMPP, root.PluralMPP);
   assert.equal(middleware.decidePayment, root.decidePayment);
+  assert.equal(server.GrantTokenVerifier, root.GrantTokenVerifier);
   assert.equal(typeof utils.buildReceiptHeader, "function");
   assert.equal(config.MppEnvironment.PRODUCTION, "https://api.pluralpay.in");
   assert.equal(types.PAYMENT_HEADER_PREFIX, "Payment ");

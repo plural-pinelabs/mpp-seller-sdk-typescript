@@ -1,25 +1,29 @@
-/** Fetch-compatible function used by the seller SDK in Node, tests, workers, or custom runtimes. */
+/** Fetch-compatible HTTP function used by the SDK. */
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
+/** Prefix used for MPP Payment credentials in HTTP auth headers. */
 export const PAYMENT_HEADER_PREFIX = "Payment ";
+/** Prefix used for encoded seller payment receipts. */
 export const PAYMENT_RECEIPT_PREFIX = "Payment ";
+/** Header name used to pass an optional Grantex grant token to sellers. */
+export const GRANTEX_TOKEN_HEADER = "X-Grantex-Token";
 
 /** Logger interface used by SDK internals for retry/auth/payment diagnostics. */
 export interface MppLogger {
-  /** Low-volume diagnostic event, usually before a request or decision. */
+  /** Emit verbose diagnostic information. */
   debug(message: string, context?: Record<string, unknown>): void;
-  /** Informational event such as retries, auth refreshes, and capture results. */
+  /** Emit informational SDK lifecycle events. */
   info(message: string, context?: Record<string, unknown>): void;
-  /** Error event for failed auth, network, credential, or capture operations. */
+  /** Emit recoverable and terminal SDK errors. */
   error(message: string, context?: Record<string, unknown>): void;
 }
 
 /** Money amount expressed in the smallest unit for the currency, e.g. paise for INR. */
 export class Amount {
   constructor(
-    /** Amount in the smallest unit for the currency, e.g. paise for INR. */
+    /** Integer amount in the smallest unit for the currency. */
     public value: number,
-    /** ISO-style currency code expected by MPP, e.g. `INR` or `PATHUSD`. */
+    /** ISO 4217 currency code, for example `INR`. */
     public currency: string,
   ) {}
 }
@@ -27,46 +31,84 @@ export class Amount {
 /** Payment challenge/capture context for a seller-protected resource. */
 export class ChargeOptions {
   constructor(
-    /** Amount the seller requires before allowing the protected resource request. */
+    /** Capture amount requested for the resource. */
     public amount: Amount,
-    /** Protected resource identifier embedded in the 402 challenge. */
+    /** Protected resource identifier or route path. */
     public resource: string,
-    /** Optional description propagated to capture/debit metadata where supported. */
+    /** Human-readable charge description. */
     public description?: string,
-    /** Optional stable seller order reference sent as `merchant_order_reference` on debit. */
+    /** Seller order reference used for reconciliation. */
     public merchantOrderReference?: string,
-    /** Optional metadata used by adapters and capture helpers. */
+    /** Additional metadata for challenge/capture context. */
     public metadata?: Record<string, string>,
-    /** Optional per-challenge expiry override in seconds. */
+    /** Per-charge challenge expiry override in seconds. */
     public challengeExpirySeconds?: number,
   ) {}
 }
 
+/** Seller-side Grantex verification settings. */
+export interface SellerGrantexConfig {
+  /** JWKS URL or Grantex base URL; base URLs resolve to `/.well-known/jwks.json`. */
+  jwksUrl: string;
+  /** JWKS cache duration in milliseconds. */
+  jwksCacheTtlMs?: number;
+  /** Scopes that must be present on the grant token before capture proceeds. */
+  requiredScopes?: string[];
+  /** Whether invalid or missing grants should block paid-resource access. */
+  enforceGrant?: boolean;
+}
+
+/** Verified Grantex JWT claims seen by the seller SDK. */
+export interface GrantTokenClaims {
+  iss: string;
+  sub: string;
+  agt: string;
+  scp: string[];
+  grnt: string;
+  iat: number;
+  exp: number;
+  dev?: string;
+  nbf?: number;
+  parentAgt?: string;
+  parentGrnt?: string;
+  delegationDepth?: number;
+  raw: Record<string, unknown>;
+}
+
+/** Result of seller-side Grantex token verification. */
+export interface GrantVerificationResult {
+  valid: boolean;
+  claims?: GrantTokenClaims;
+  error?: string;
+}
+
 /** Configuration required to construct a seller SDK instance. */
 export interface PluralSellerConfig {
-  /** Client id used for `POST /api/auth/v1/token` unless `accessToken` is supplied. */
+  /** Pine Labs OAuth client id issued after merchant onboarding. */
   clientId: string;
-  /** Client secret used for `POST /api/auth/v1/token` unless `accessToken` is supplied. */
+  /** Pine Labs OAuth client secret issued with the client id. */
   clientSecret: string;
-  /** Shared secret used to HMAC-sign seller challenges and verify returned credentials. */
+  /** Secret used to sign and verify seller 402 challenges. */
   challengeSecretKey: string;
-  /** Challenge realm string embedded in `WWW-Authenticate` payloads. */
+  /** Realm embedded in generated `WWW-Authenticate` payment challenges. */
   realm?: string;
-  /** Base URL used for MPP service calls and auth token exchange. */
+  /** Base host for auth and MPP debit APIs, for example `MppEnvironment.SANDBOX`. */
   baseUrl?: string;
-  /** Default seller challenge expiry in seconds. Defaults to 300. */
+  /** Default challenge expiry in seconds when `ChargeOptions` does not override it. */
   defaultChallengeExpirySeconds?: number;
-  /** Per-request timeout in milliseconds. Defaults to 30000. */
+  /** Per-request timeout in milliseconds. */
   requestTimeoutMs?: number;
-  /** Number of retries for network errors, HTTP 429, and 5xx responses. Defaults to 3. */
+  /** Number of retry attempts for retriable auth and MPP API requests. */
   maxRetries?: number;
-  /** Initial exponential-backoff retry delay in milliseconds. Defaults to 500. */
+  /** Initial retry backoff delay in milliseconds. */
   initialRetryDelayMs?: number;
-  /** Optional logger for request, retry, auth, and capture diagnostics. */
+  /** Optional logger for auth, retry, payment, and Grantex diagnostics. */
   logger?: MppLogger;
-  /** Pre-issued bearer token. When supplied, the SDK skips client-credential exchange. */
+  /** Optional seller-side Grantex token verification settings. */
+  grantex?: SellerGrantexConfig;
+  /** Pre-resolved bearer token for environments that manage auth outside the SDK. */
   accessToken?: string;
-  /** Custom fetch implementation for tests or non-standard runtimes. */
+  /** Custom fetch implementation for tests, workers, or non-standard runtimes. */
   fetch?: FetchLike;
 }
 
@@ -127,21 +169,21 @@ export interface VerificationResult {
 
 /** Input for seller debit/capture via `POST /mpp/v1/debit`. */
 export interface CaptureOptions {
-  /** One-time payment token from the buyer credential payload. */
+  /** One-time MPP payment token supplied by the buyer credential. */
   token: string;
-  /** Debit amount in minor units. */
+  /** Capture amount. */
   amount: Amount;
-  /** Optional capture/debit description retained for adapter compatibility. */
+  /** Human-readable capture description. */
   description?: string;
-  /** Optional stable seller order reference sent as `merchant_order_reference`. */
+  /** Seller order reference used for reconciliation. */
   merchantOrderReference?: string;
-  /** Optional metadata; may include `customer_reference` when not passed directly. */
+  /** Additional metadata for the debit request. */
   metadata?: Record<string, string>;
-  /** Optional idempotency key for `/mpp/v1/debit`. Generated when absent. */
+  /** Idempotency key for capture/debit. */
   idempotencyKey?: string;
-  /** MPP payment type. Defaults to `SBMD`; `CRYPTO` is supported by the service contract. */
+  /** Payment rail type. Current examples use `SBMD`; other rails are future scope. */
   paymentType?: "SBMD" | "CRYPTO" | string;
-  /** Buyer/customer reference required by `/mpp/v1/debit`. */
+  /** Stable buyer/customer reference required by MPP V2 debit. */
   customerReference?: string;
 }
 
@@ -186,21 +228,13 @@ export interface ReceiptData {
 
 /** Decision returned by seller middleware helpers for a paid-resource request. */
 export interface PaymentDecision {
-  /** Adapter action: challenge, reject, capture error, or proceed. */
-  action: "challenge" | "invalid" | "failed" | "error" | "proceed";
-  /** HTTP status the framework adapter should return for non-proceed actions. */
+  action: "challenge" | "invalid" | "failed" | "grant_required" | "grant_invalid" | "error" | "proceed";
   status: number;
-  /** Response headers such as `WWW-Authenticate`, `Payment-Receipt`, or content type. */
   headers: Record<string, string>;
-  /** Problem Details body for challenge, invalid, failed, or capture error actions. */
   problemDetails?: ProblemDetails | Record<string, unknown>;
-  /** Captured MPP debit result when `action` is `proceed`. */
   captureResult?: CaptureResult;
-  /** Verified buyer credential when available. */
   credential?: Credential;
-  /** Encoded `Payment-Receipt` header value when capture succeeds. */
   receiptHeader?: string;
-  /** Fresh challenge data for challenge/invalid/failed actions. */
   challengeResult?: ChallengeResult;
 }
 
