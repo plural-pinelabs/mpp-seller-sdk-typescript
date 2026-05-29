@@ -29,7 +29,7 @@ export async function requestWithRetry(
       throw error;
     }
   }
-  throw lastError instanceof Error ? lastError : new Error("MPP request failed");
+  throw lastError instanceof Error ? lastError : new Error("P3P request failed");
 }
 
 export async function safeJson(response: Response): Promise<unknown> {

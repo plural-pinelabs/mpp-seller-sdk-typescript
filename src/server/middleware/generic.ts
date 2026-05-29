@@ -1,7 +1,6 @@
 import {
   ChargeOptions,
-  GRANTEX_TOKEN_HEADER,
-  MppCaptureError,
+  P3PCaptureError,
   PaymentDecision,
   PAYMENT_HEADER_PREFIX,
   PluralSellerConfig,
@@ -12,24 +11,22 @@ import { buildReceiptHeader } from "../../utils/receipt-builder";
 import { CaptureClient } from "../capture-client";
 import { ChallengeGenerator } from "../challenge-generator";
 import { CredentialVerifier } from "../credential-verifier";
-import { GrantTokenVerifier } from "../grant-token-verifier";
 
 /** Decide how a seller route should respond to an incoming paid-resource request. */
 export async function decidePayment(options: {
-  authorizationHeader?: string;
-  grantexTokenHeader?: string;
+  credentialHeader?: string;
   config: PluralSellerConfig;
   chargeOptions: ChargeOptions;
 }): Promise<PaymentDecision> {
   const challengeGenerator = new ChallengeGenerator(options.config);
   const credentialVerifier = new CredentialVerifier(options.config);
 
-  if (!options.authorizationHeader?.startsWith(PAYMENT_HEADER_PREFIX)) {
+  if (!options.credentialHeader?.startsWith(PAYMENT_HEADER_PREFIX)) {
     const result = await challengeGenerator.generate(options.chargeOptions);
     return challengeDecision("challenge", result, result.problemDetails);
   }
 
-  const verification = await credentialVerifier.verify(options.authorizationHeader);
+  const verification = await credentialVerifier.verify(options.credentialHeader);
   if (!verification.valid || !verification.credential) {
     const result = await challengeGenerator.generate(options.chargeOptions);
     return challengeDecision("invalid", result, {
@@ -41,43 +38,6 @@ export async function decidePayment(options: {
     });
   }
 
-  if (options.config.grantex?.enforceGrant === true && !options.grantexTokenHeader) {
-    return {
-      action: "grant_required",
-      status: 403,
-      headers: { "Content-Type": "application/problem+json" },
-      problemDetails: {
-        type: "urn:ietf:rfc:9725:error:grant-required",
-        title: "Grant Token Required",
-        status: 403,
-        detail: `A valid Grantex grant token is required in the ${GRANTEX_TOKEN_HEADER} header.`,
-      },
-    };
-  }
-  if (options.config.grantex && options.grantexTokenHeader) {
-    const grantResult = await new GrantTokenVerifier(options.config.grantex, options.config.fetch).verify(options.grantexTokenHeader);
-    if (!grantResult.valid) {
-      if (options.config.grantex.enforceGrant === true) {
-        return {
-          action: "grant_invalid",
-          status: 403,
-          headers: { "Content-Type": "application/problem+json" },
-          problemDetails: {
-            type: "urn:ietf:rfc:9725:error:grant-invalid",
-            title: "Invalid Grant Token",
-            status: 403,
-            detail: grantResult.error ?? "The grant token could not be verified.",
-          },
-        };
-      }
-      try {
-        options.config.logger?.info("Grantex token verification failed (non-enforcing)", { error: grantResult.error });
-      } catch {
-        // Logging failures are non-fatal.
-      }
-    }
-  }
-
   try {
     const captureClient = new CaptureClient(options.config);
     const captureResult = await captureClient.capture({
@@ -86,9 +46,15 @@ export async function decidePayment(options: {
       description: options.chargeOptions.description,
       merchantOrderReference: options.chargeOptions.merchantOrderReference,
       metadata: options.chargeOptions.metadata,
+      paymentMethod: verification.credential.payload.payment_method,
       customerReference: verification.credential.payload.customer_reference,
+      mobileNumber: verification.credential.payload.mobile_number,
+      challengeId: verification.credential.challenge.id,
     });
-    const receiptHeader = buildReceiptHeader(captureResult, verification.credential.challenge.id);
+    const receiptHeader = buildReceiptHeader(captureResult, verification.credential.challenge.id, {
+      paymentGateway: options.config.paymentGateway,
+      paymentMethod: verification.credential.payload.payment_method,
+    });
     return {
       action: "proceed",
       status: 200,
@@ -98,21 +64,14 @@ export async function decidePayment(options: {
       receiptHeader,
     };
   } catch (error) {
-    if (error instanceof MppCaptureError && error.captureError?.httpStatus && error.captureError.httpStatus >= 500) {
+    if (error instanceof P3PCaptureError && error.captureError?.httpStatus && error.captureError.httpStatus >= 500) {
       return {
         action: "error",
         status: 502,
-        headers: { "Content-Type": "application/problem+json" },
+        headers: { "content-type": "application/json" },
         problemDetails: {
-          type: "urn:plural:error:payment-capture-failed",
-          title: "Payment Capture Failed",
-          status: 502,
-          detail: error.message,
-          upstream: {
-            code: error.captureError.code,
-            http_status: error.captureError.httpStatus,
-            details: error.captureError.details,
-          },
+          code: error.captureError.code,
+          message: error.captureError.message,
         },
       };
     }

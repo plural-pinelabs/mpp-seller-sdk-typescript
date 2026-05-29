@@ -1,7 +1,7 @@
 {
-  "name": "@plural/mpp-seller-sdk",
+  "name": "@pine-labs-online/p3p-seller-sdk",
   "version": "0.1.0",
-  "description": "Plural MPP Seller SDK - x402 Machine Payments Protocol server middleware (TypeScript)",
+  "description": "Plural P3P Seller SDK - Plural P3P server middleware (TypeScript)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "license": "MIT",
@@ -10,14 +10,14 @@
     "url": "git+https://github.com/mishrasanjeev/agentic-org.git"
   },
   "keywords": [
-    "mpp",
+    "p3p",
     "x402",
     "payment",
     "seller",
-    "plural",
+    "pinelabs",
     "upi",
     "sbmd",
-    "machine-payments"
+    "pinelabs-payment-protocol"
   ],
   "engines": {
     "node": ">=18"

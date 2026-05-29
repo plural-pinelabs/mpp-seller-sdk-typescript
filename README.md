@@ -1,251 +1,160 @@
-# @plural/mpp-seller-sdk
+# Plural P3P Seller SDK
 
- 
-
-TypeScript SDK for Plural MPP seller integrations. It generates signed payment
-
-challenges, verifies `Payment` credentials, captures payment through MPP debit,
-
-and builds `Payment-Receipt` headers.
-
- 
+TypeScript SDK for Plural P3P seller integrations. It generates
+signed HTTP `402` payment challenges, verifies buyer `Payment` credentials,
+captures payment through P3P debit, and builds `Payment-Receipt` headers.
 
 ## Install
 
- 
-
 ```bash
-
-npm install @plural/mpp-seller-sdk
-
+npm install @pine-labs-online/p3p-seller-sdk
 ```
-
- 
 
 Requires Node.js `>=18` or another runtime with `fetch`, `AbortSignal.timeout`,
-
 and standard Web APIs.
-
- 
-
-## Package Layout
-
- 
-
-The SDK is split into small modules and exposed through npm subpath exports:
-
- 
-
-```ts
-
-import { PluralMPP } from "@plural/mpp-seller-sdk";
-
-import { PluralMPP as Server } from "@plural/mpp-seller-sdk/server";
-
-import { decidePayment } from "@plural/mpp-seller-sdk/server/middleware";
-
-import { MppEnvironment } from "@plural/mpp-seller-sdk/config";
-
-import type { PluralSellerConfig, PaymentDecision } from "@plural/mpp-seller-sdk/types";
-
-import { buildReceiptHeader } from "@plural/mpp-seller-sdk/utils";
-
-```
-
- 
-
-Use the root import for most applications. Use subpath imports when building
-
-framework adapters or services with stricter module ownership.
-
- 
 
 ## Quick Start
 
- 
-
 ```ts
+import {
+  Amount,
+  ChargeOptions,
+  P3PEnvironment,
+  PaymentGateway,
+  PaymentMethod,
+  PluralP3P,
+} from "@pine-labs-online/p3p-seller-sdk";
 
-import { Amount, ChargeOptions, MppEnvironment, PluralMPP } from "@plural/mpp-seller-sdk";
-
- 
-
-const mpp = PluralMPP.create({
-
-  clientId: "seller-client-id",
-
-  clientSecret: "seller-client-secret",
-
-  challengeSecretKey: "shared-secret",
-
-  realm: MppEnvironment.SANDBOX,
-
-  baseUrl: MppEnvironment.SANDBOX,
-
+const p3p = PluralP3P.create({
+  clientId: "seller-client-id",
+  clientSecret: "seller-client-secret",
+  challengeSecretKey: "shared-secret",
+  paymentGateway: PaymentGateway.PineLabsOnline,
+  availablePaymentMethods: [PaymentMethod.UpiSbmd, PaymentMethod.Crypto],
+  realm: P3PEnvironment.SANDBOX,
+  env: P3PEnvironment.SANDBOX,
 });
 
- 
-
-const challenge = await mpp.generateChallenge(
-
-  new ChargeOptions(new Amount(50000, "INR"), "/api/premium"),
-
+const challenge = await p3p.generateChallenge(
+  new ChargeOptions(new Amount(50000, "INR"), "/api/premium"),
 );
-
 ```
 
- 
+## Payment Configuration
 
-## Configuration
-
- 
+`paymentGateway` is mandatory and currently supports
+`PaymentGateway.PineLabsOnline`. `availablePaymentMethods` is mandatory and
+controls what the seller advertises inside each 402 challenge:
 
 ```ts
-
-const mpp = PluralMPP.create({
-
-  clientId: process.env.PLURAL_CLIENT_ID!,
-
-  clientSecret: process.env.PLURAL_CLIENT_SECRET!,
-
-  challengeSecretKey: process.env.MPP_CHALLENGE_SECRET!,
-
-  realm: MppEnvironment.SANDBOX,
-
-  baseUrl: MppEnvironment.SANDBOX,
-
-  requestTimeoutMs: 30_000,
-
-  maxRetries: 3,
-
-});
-
+const config = {
+  clientId: "...",
+  clientSecret: "...",
+  challengeSecretKey: "...",
+  paymentGateway: PaymentGateway.PineLabsOnline,
+  availablePaymentMethods: [PaymentMethod.UpiSbmd, PaymentMethod.Crypto],
+  env: P3PEnvironment.SANDBOX,
+};
 ```
 
- 
+`clientId`, `clientSecret`, `challengeSecretKey`, and `env` are mandatory.
+The SDK exchanges client credentials internally and refreshes its cached bearer
+token before expiry. Static `accessToken` and `baseUrl` config fields are no
+longer supported.
 
-`baseUrl` is the Plural MPP base URL. Authentication always uses
+Environment defaults:
 
-`POST /api/auth/v1/token`; the same base URL can route that call internally to
+| Env | URL | Timeout | Retries | Initial retry delay |
+|---|---|---:|---:|---:|
+| `P3PEnvironment.SANDBOX` | `https://pluraluat.v2.pinepg.in` | 30000 ms | 2 | 300 ms |
+| `P3PEnvironment.PRODUCTION` | `https://api.pluralpay.in` | 10000 ms | 2 | 200 ms |
 
-your central Keycloak-backed auth service.
+The generated challenge includes:
 
- 
+- `paymentGateway: "PINE LABS ONLINE"`
+- `request.availablePaymentMethods: ["SBMD", "CRYPTO"]`
 
-The SDK does not send `Merchant-ID` by default. The bearer token is expected to
-
-be resolved by your infrastructure into merchant context. If a local test setup
-
-needs an explicit merchant header, add it only in that test harness or adapter.
-
- 
-
-For Grantex grant verification, configure `grantex.jwksUrl` with
-
-`https://grantex.dev/.well-known/jwks.json` or the base URL
-
-`https://grantex.dev`. The seller middleware verifies RS256 signatures offline,
-
-checks expiry and required scopes, and returns `grant_invalid` when enforcement
-
-is enabled and verification fails.
-
- 
+During verification, the seller SDK rejects buyer credentials whose
+`payload.payment_gateway` does not match the challenge gateway or whose
+`payload.payment_method` is not advertised by the signed challenge and seller
+config.
 
 ## Generic Middleware Flow
 
- 
-
 ```ts
-
-import { Amount, ChargeOptions, decidePayment } from "@plural/mpp-seller-sdk";
-
- 
+import {
+  Amount,
+  ChargeOptions,
+  decidePayment,
+} from "@pine-labs-online/p3p-seller-sdk";
 
 const decision = await decidePayment({
-
-  authorizationHeader: request.headers.get("authorization") ?? undefined,
-
-  grantexTokenHeader: request.headers.get("x-grantex-token") ?? undefined,
-
-  config,
-
-  chargeOptions: new ChargeOptions(new Amount(50000, "INR"), "/api/premium"),
-
+  credentialHeader: request.headers.get("P3P-Credential") ?? undefined,
+  config,
+  chargeOptions: new ChargeOptions(new Amount(50000, "INR"), "/api/premium"),
 });
 
- 
-
 if (decision.action !== "proceed") {
-
-  return new Response(JSON.stringify(decision.problemDetails), {
-
-    status: decision.status,
-
-    headers: decision.headers,
-
-  });
-
+  return new Response(JSON.stringify(decision.problemDetails), {
+    status: decision.status,
+    headers: decision.headers,
+  });
 }
 
- 
-
 const response = await handler(request);
-
 response.headers.set("Payment-Receipt", decision.headers["Payment-Receipt"]);
-
 return response;
-
 ```
 
- 
+## 402 Flow
 
-## Flow
-
- 
-
-1. A request without `Authorization: Payment ...` receives `402` with
-
-   `WWW-Authenticate: Payment <challenge>`.
-
+1. A request without `P3P-Credential: Payment ...` receives `402` with
+   `WWW-Authenticate: Payment <challenge>`.
 2. A retried request with a credential is decoded and HMAC verified.
-
 3. The SDK authenticates with `POST /api/auth/v1/token`.
-
 4. The SDK captures payment with `POST /mpp/v1/debit`.
-
 5. The protected handler proceeds and the response receives
+   `Payment-Receipt`.
 
-   `Payment-Receipt`.
+The debit request body uses the current P3P contract:
 
- 
+- `type` is the selected payment method, for example `"SBMD"`.
+- `customer.merchant_customer_reference` is populated from the buyer
+  credential.
+- `payment_amount.value` is numeric minor units.
+- `payment_token` is the one-shot token from the buyer credential.
+- `challenge_id` is the seller challenge id from the verified buyer credential.
+- `Idempotency-Key` is sent as a header; `Merchant-ID` is not sent by the SDK.
+
+Receipt payloads include `paymentGateway` and `paymentMethod` when that context
+is available. The older receipt `method` field is not emitted.
+
+## Mandates And Tokens
+
+Seller-side mandate creation is available through `POST /mpp/v1/pre-authorize`:
+
+```ts
+const mandate = await p3p.createMandate({
+  customerReference: "customer-ref-123",
+  amount: new Amount(50000, "INR"),
+  validityInDays: 20,
+  paymentMethod: PaymentMethod.UpiSbmd,
+});
+```
+
+The seller SDK intentionally does not expose token creation. The buyer/customer
+flow obtains a one-shot token and sends it back in the `P3P-Credential: Payment`
+credential. The seller SDK verifies that credential and then calls
+`POST /mpp/v1/debit`.
 
 ## Development
 
- 
-
 ```bash
-
 npm install
-
 npm run build
-
 npm test
-
-npm pack --dry-run
-
 ```
 
- 
-
-`npm publish --access public` will run `prepublishOnly`, compile `dist/`, and
-
-publish only the files declared in `package.json`.
-
- 
-
 ## License
-
- 
 
 MIT

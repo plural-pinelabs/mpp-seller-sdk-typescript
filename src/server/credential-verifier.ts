@@ -1,46 +1,58 @@
-import { DEFAULT_REALM } from "../config";
 import {
   Challenge,
+  ChallengeRequest,
   Credential,
+  PAYMENT_CREDENTIAL_HEADER,
   PAYMENT_HEADER_PREFIX,
+  PaymentGateway,
+  PaymentMethod,
   PluralSellerConfig,
   VerificationResult,
 } from "../types";
 import { decodeJson, encodeJson, isBase64Url } from "../utils/base64url";
 import { computeChallengeId } from "../utils/hmac";
 import { asRecord, stringOrUndefined } from "../utils/parsers";
+import { validateConfig } from "../utils/validation";
 
 export class CredentialVerifier {
   private readonly secretKey: string;
   private readonly realm: string;
+  private readonly paymentGateway: PaymentGateway;
+  private readonly availablePaymentMethods: PaymentMethod[];
 
   constructor(config: PluralSellerConfig) {
+    validateConfig(config);
     this.secretKey = config.challengeSecretKey;
-    this.realm = config.realm ?? DEFAULT_REALM;
+    this.realm = config.realm ?? config.env;
+    this.paymentGateway = config.paymentGateway;
+    this.availablePaymentMethods = [...config.availablePaymentMethods];
   }
 
-  /** Decode and validate an `Authorization: Payment <payload>` header. */
-  async verify(authorizationHeader?: string): Promise<VerificationResult> {
-    const encoded = extractPayload(authorizationHeader ?? "");
+  /** Decode and validate a `P3P-Credential: Payment <payload>` header value. */
+  async verify(credentialHeader?: string): Promise<VerificationResult> {
+    const encoded = extractPayload(credentialHeader ?? "");
     if (!encoded) {
-      return { valid: false, error: "Invalid Authorization header format. Expected: Payment <base64url>" };
+      return { valid: false, error: `Invalid ${PAYMENT_CREDENTIAL_HEADER} header format. Expected: Payment <base64url>` };
     }
     let credential: Credential;
     try {
       credential = dictToCredential(decodeJson(encoded));
     } catch {
-      return { valid: false, error: "Failed to decode credential from Authorization header" };
+      return { valid: false, error: `Failed to decode credential from ${PAYMENT_CREDENTIAL_HEADER} header` };
     }
 
     const challenge = credential.challenge;
-    if (!challenge.id || !challenge.realm || !challenge.method || !challenge.request) {
+    if (!challenge.id || !challenge.realm || !challenge.paymentGateway || !challenge.request) {
       return { valid: false, credential, error: "Credential contains an incomplete challenge" };
     }
     if (challenge.realm !== this.realm) {
       return { valid: false, credential, error: `Challenge realm mismatch. Expected "${this.realm}", got "${challenge.realm}"` };
     }
-    if (challenge.method !== "plural") {
-      return { valid: false, credential, error: `Unsupported payment method: ${challenge.method}` };
+    if (challenge.paymentGateway !== this.paymentGateway) {
+      return { valid: false, credential, error: `Unsupported payment gateway: ${challenge.paymentGateway}` };
+    }
+    if (!challenge.request.availablePaymentMethods.length) {
+      return { valid: false, credential, error: "Challenge missing available payment methods" };
     }
     if (!Number.isFinite(Date.parse(challenge.expires)) || Date.parse(challenge.expires) <= Date.now()) {
       return { valid: false, credential, error: "Challenge has expired" };
@@ -49,7 +61,7 @@ export class CredentialVerifier {
     const expectedId = await computeChallengeId(
       this.secretKey,
       challenge.realm,
-      challenge.method,
+      challenge.paymentGateway,
       challenge.intent,
       encodeJson(challenge.request),
       challenge.expires,
@@ -64,6 +76,19 @@ export class CredentialVerifier {
     if (!credential.payload?.token) {
       return { valid: false, credential, error: "Credential missing payment token" };
     }
+    if (!credential.payload.payment_method) {
+      return { valid: false, credential, error: "Credential missing selected payment method" };
+    }
+    if (
+      !challenge.request.availablePaymentMethods.includes(credential.payload.payment_method)
+      || !this.availablePaymentMethods.includes(credential.payload.payment_method)
+    ) {
+      return {
+        valid: false,
+        credential,
+        error: `Selected payment method ${credential.payload.payment_method} is not accepted by this seller challenge`,
+      };
+    }
     return { valid: true, credential };
   }
 }
@@ -73,18 +98,20 @@ function dictToCredential(raw: unknown): Credential {
   const challenge = asRecord(record.challenge) ?? {};
   const request = asRecord(challenge.request) ?? {};
   const payload = asRecord(record.payload) ?? {};
+  const challengeRequest: ChallengeRequest = {
+    scheme: String(request.scheme ?? ""),
+    amount: String(request.amount ?? ""),
+    currency: String(request.currency ?? ""),
+    resource: String(request.resource ?? ""),
+    availablePaymentMethods: parsePaymentMethods(request.availablePaymentMethods ?? request.available_payment_methods),
+  };
   return {
     challenge: {
       id: String(challenge.id ?? ""),
       realm: String(challenge.realm ?? ""),
-      method: String(challenge.method ?? ""),
+      paymentGateway: parsePaymentGateway(challenge.paymentGateway ?? challenge.payment_gateway),
       intent: String(challenge.intent ?? ""),
-      request: {
-        scheme: String(request.scheme ?? ""),
-        amount: String(request.amount ?? ""),
-        currency: String(request.currency ?? ""),
-        resource: String(request.resource ?? ""),
-      },
+      request: challengeRequest,
       expires: String(challenge.expires ?? ""),
     } satisfies Challenge,
     source: String(record.source ?? ""),
@@ -92,8 +119,28 @@ function dictToCredential(raw: unknown): Credential {
       type: "token",
       token: String(payload.token ?? ""),
       customer_reference: stringOrUndefined(payload.customer_reference ?? payload.customerReference),
+      mobile_number: stringOrUndefined(payload.mobile_number ?? payload.mobileNumber),
+      payment_method: parsePaymentMethod(payload.payment_method ?? payload.paymentMethod),
     },
   };
+}
+
+function parsePaymentGateway(value: unknown): PaymentGateway {
+  return value === PaymentGateway.PineLabsOnline ? PaymentGateway.PineLabsOnline : String(value ?? "") as PaymentGateway;
+}
+
+function parsePaymentMethod(value: unknown): PaymentMethod {
+  if (value === PaymentMethod.UpiSbmd || value === PaymentMethod.Crypto) {
+    return value;
+  }
+  return String(value ?? "") as PaymentMethod;
+}
+
+function parsePaymentMethods(value: unknown): PaymentMethod[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map(parsePaymentMethod);
 }
 
 function extractPayload(header: string): string | undefined {
