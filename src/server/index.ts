@@ -3,5 +3,5 @@ export * from "./api-client";
 export * from "./capture-client";
 export * from "./challenge-generator";
 export * from "./credential-verifier";
-export * from "./plural-p3p";
+export * from "./pine-labs-online-p3p";
 export * from "./middleware";

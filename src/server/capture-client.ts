@@ -5,11 +5,10 @@ import {
   FetchLike,
   P3PCaptureError,
   P3PError,
-  PluralSellerConfig,
+  PineLabsOnlineServerConfig,
 } from "../types";
 import { requestWithRetry, safeJson } from "../utils/http";
 import { asRecord, dictToCaptureResult } from "../utils/parsers";
-import { buildRequestHash } from "../utils/request-hash";
 import { AuthManager } from "./auth-manager";
 
 export class CaptureClient {
@@ -17,7 +16,7 @@ export class CaptureClient {
   private readonly fetchImpl: FetchLike;
   private readonly auth: AuthManager;
 
-  constructor(private config: PluralSellerConfig) {
+  constructor(private config: PineLabsOnlineServerConfig) {
     this.config = withP3PEnvironmentDefaults(config);
     this.baseUrl = stripSlash(resolveP3PBaseUrl(this.config.env));
     this.fetchImpl = this.config.fetch ?? globalThis.fetch?.bind(globalThis);
@@ -27,14 +26,14 @@ export class CaptureClient {
     this.auth = new AuthManager(this.config, this.baseUrl, this.fetchImpl);
   }
 
-  /** Call `/mpp/v1/debit` with idempotency and request-hash headers. */
+  /** Call `/mpp/v1/debit` with idempotency headers. */
   async capture(options: CaptureOptions): Promise<CaptureResult> {
     resolveCustomerReference(options);
     const mobileNumber = resolveMobileNumber(options);
     const token = await this.auth.getAccessToken();
     const idempotencyKey = options.idempotencyKey ?? options.merchantOrderReference ?? randomId();
     const payload = {
-      type: options.paymentMethod,
+      payment_method: options.paymentMethod,
       customer: { mobile_number: mobileNumber },
       payment_amount: { value: options.amount.value, currency: options.amount.currency },
       payment_token: options.token,
@@ -46,7 +45,6 @@ export class CaptureClient {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
         "Idempotency-Key": idempotencyKey,
-        "Request-Hash": buildRequestHash(payload),
       },
       body: JSON.stringify(payload),
     }, this.config);

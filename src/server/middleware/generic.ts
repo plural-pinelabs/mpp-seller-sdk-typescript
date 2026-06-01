@@ -3,7 +3,7 @@ import {
   P3PCaptureError,
   PaymentDecision,
   PAYMENT_HEADER_PREFIX,
-  PluralSellerConfig,
+  PineLabsOnlineServerConfig,
   ProblemDetails,
   ChallengeResult,
 } from "../../types";
@@ -12,10 +12,10 @@ import { CaptureClient } from "../capture-client";
 import { ChallengeGenerator } from "../challenge-generator";
 import { CredentialVerifier } from "../credential-verifier";
 
-/** Decide how a seller route should respond to an incoming paid-resource request. */
+/** Decide how a server route should respond to an incoming paid-resource request. */
 export async function decidePayment(options: {
   credentialHeader?: string;
-  config: PluralSellerConfig;
+  config: PineLabsOnlineServerConfig;
   chargeOptions: ChargeOptions;
 }): Promise<PaymentDecision> {
   const challengeGenerator = new ChallengeGenerator(options.config);

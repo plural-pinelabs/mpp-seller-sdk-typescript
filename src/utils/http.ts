@@ -1,4 +1,4 @@
-import { FetchLike, PluralSellerConfig } from "../types";
+import { FetchLike, PineLabsOnlineServerConfig } from "../types";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RETRIES = 3;
@@ -8,7 +8,7 @@ export async function requestWithRetry(
   fetchImpl: FetchLike,
   url: string,
   init: RequestInit,
-  config: Pick<PluralSellerConfig, "requestTimeoutMs" | "maxRetries" | "initialRetryDelayMs">,
+  config: Pick<PineLabsOnlineServerConfig, "requestTimeoutMs" | "maxRetries" | "initialRetryDelayMs">,
 ): Promise<Response> {
   const maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES;
   let lastError: unknown;

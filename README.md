@@ -1,13 +1,13 @@
-# Plural P3P Seller SDK
+# Pine Labs Online P3P Server SDK
 
-TypeScript SDK for Plural P3P seller integrations. It generates
-signed HTTP `402` payment challenges, verifies buyer `Payment` credentials,
+TypeScript SDK for Pine Labs Online P3P server integrations. It generates
+signed HTTP `402` payment challenges, verifies client `Payment` credentials,
 captures payment through P3P debit, and builds `Payment-Receipt` headers.
 
 ## Install
 
 ```bash
-npm install @pine-labs-online/p3p-seller-sdk
+npm install @pine-labs-online/p3p-server-sdk
 ```
 
 Requires Node.js `>=18` or another runtime with `fetch`, `AbortSignal.timeout`,
@@ -22,15 +22,14 @@ import {
   P3PEnvironment,
   PaymentGateway,
   PaymentMethod,
-  PluralP3P,
-} from "@pine-labs-online/p3p-seller-sdk";
+  PineLabsOnlineP3P,
+} from "@pine-labs-online/p3p-server-sdk";
 
-const p3p = PluralP3P.create({
-  clientId: "seller-client-id",
-  clientSecret: "seller-client-secret",
-  challengeSecretKey: "shared-secret",
+const p3p = PineLabsOnlineP3P.create({
+  clientId: "server-client-id",
+  clientSecret: "server-client-secret",
   paymentGateway: PaymentGateway.PineLabsOnline,
-  availablePaymentMethods: [PaymentMethod.UpiSbmd, PaymentMethod.Crypto],
+  availablePaymentMethods: [PaymentMethod.UPI_RESERVE_PAY, PaymentMethod.Crypto],
   realm: P3PEnvironment.SANDBOX,
   env: P3PEnvironment.SANDBOX,
 });
@@ -44,23 +43,24 @@ const challenge = await p3p.generateChallenge(
 
 `paymentGateway` is mandatory and currently supports
 `PaymentGateway.PineLabsOnline`. `availablePaymentMethods` is mandatory and
-controls what the seller advertises inside each 402 challenge:
+controls what the server advertises inside each 402 challenge:
 
 ```ts
 const config = {
   clientId: "...",
   clientSecret: "...",
-  challengeSecretKey: "...",
   paymentGateway: PaymentGateway.PineLabsOnline,
-  availablePaymentMethods: [PaymentMethod.UpiSbmd, PaymentMethod.Crypto],
+  availablePaymentMethods: [PaymentMethod.UPI_RESERVE_PAY, PaymentMethod.Crypto],
   env: P3PEnvironment.SANDBOX,
 };
 ```
 
-`clientId`, `clientSecret`, `challengeSecretKey`, and `env` are mandatory.
+`clientId`, `clientSecret`, and `env` are mandatory.
 The SDK exchanges client credentials internally and refreshes its cached bearer
 token before expiry. Static `accessToken` and `baseUrl` config fields are no
 longer supported.
+The local challenge HMAC key is derived internally from `clientSecret` with a
+stable SDK prefix, so there is no separate challenge-signing config field.
 
 Environment defaults:
 
@@ -71,13 +71,11 @@ Environment defaults:
 
 The generated challenge includes:
 
-- `paymentGateway: "PINE LABS ONLINE"`
 - `request.availablePaymentMethods: ["SBMD", "CRYPTO"]`
 
-During verification, the seller SDK rejects buyer credentials whose
-`payload.payment_gateway` does not match the challenge gateway or whose
-`payload.payment_method` is not advertised by the signed challenge and seller
-config.
+During verification, the server SDK rejects client credentials whose
+`payload.payment_method` is not advertised by the signed challenge and server
+config. `paymentGateway` is not emitted in the server challenge payload.
 
 ## Generic Middleware Flow
 
@@ -86,7 +84,7 @@ import {
   Amount,
   ChargeOptions,
   decidePayment,
-} from "@pine-labs-online/p3p-seller-sdk";
+} from "@pine-labs-online/p3p-server-sdk";
 
 const decision = await decidePayment({
   credentialHeader: request.headers.get("P3P-Credential") ?? undefined,
@@ -119,11 +117,11 @@ return response;
 The debit request body uses the current P3P contract:
 
 - `type` is the selected payment method, for example `"SBMD"`.
-- `customer.merchant_customer_reference` is populated from the buyer
+- `customer.merchant_customer_reference` is populated from the client
   credential.
 - `payment_amount.value` is numeric minor units.
-- `payment_token` is the one-shot token from the buyer credential.
-- `challenge_id` is the seller challenge id from the verified buyer credential.
+- `payment_token` is the one-shot token from the client credential.
+- `challenge_id` is the server challenge id from the verified client credential.
 - `Idempotency-Key` is sent as a header; `Merchant-ID` is not sent by the SDK.
 
 Receipt payloads include `paymentGateway` and `paymentMethod` when that context
@@ -131,20 +129,20 @@ is available. The older receipt `method` field is not emitted.
 
 ## Mandates And Tokens
 
-Seller-side mandate creation is available through `POST /mpp/v1/pre-authorize`:
+Server-side mandate creation is available through `POST /mpp/v1/pre-authorize`:
 
 ```ts
 const mandate = await p3p.createMandate({
   customerReference: "customer-ref-123",
   amount: new Amount(50000, "INR"),
   validityInDays: 20,
-  paymentMethod: PaymentMethod.UpiSbmd,
+  paymentMethod: PaymentMethod.UPI_RESERVE_PAY,
 });
 ```
 
-The seller SDK intentionally does not expose token creation. The buyer/customer
+The server SDK intentionally does not expose token creation. The client/customer
 flow obtains a one-shot token and sends it back in the `P3P-Credential: Payment`
-credential. The seller SDK verifies that credential and then calls
+credential. The server SDK verifies that credential and then calls
 `POST /mpp/v1/debit`.
 
 ## Development

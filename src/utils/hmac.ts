@@ -1,3 +1,9 @@
+export const CHALLENGE_HMAC_KEY_PREFIX = "p3p-challenge-v1:";
+
+export function deriveChallengeHmacKey(clientSecret: string): string {
+  return `${CHALLENGE_HMAC_KEY_PREFIX}${clientSecret}`;
+}
+
 export async function computeHmacSha256(key: string, data: string): Promise<string> {
   const cryptoKey = await globalThis.crypto.subtle.importKey(
     "raw",
@@ -13,11 +19,10 @@ export async function computeHmacSha256(key: string, data: string): Promise<stri
 export async function computeChallengeId(
   secretKey: string,
   realm: string,
-  method: string,
   intent: string,
   requestBase64: string,
   expires: string,
 ): Promise<string> {
-  const payload = `${realm}|${method}|${intent}|${requestBase64}|${expires}`;
+  const payload = `${realm}|${intent}|${requestBase64}|${expires}`;
   return `ch_${await computeHmacSha256(secretKey, payload)}`;
 }

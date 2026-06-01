@@ -1,4 +1,4 @@
-import { FetchLike, P3PError, PluralSellerConfig } from "../types";
+import { FetchLike, P3PError, PineLabsOnlineServerConfig } from "../types";
 import { requestWithRetry, safeJson } from "../utils/http";
 import { asRecord } from "../utils/parsers";
 
@@ -7,7 +7,7 @@ export class AuthManager {
   private expiresAt = 0;
 
   constructor(
-    private config: PluralSellerConfig,
+    private config: PineLabsOnlineServerConfig,
     private baseUrl: string,
     private fetchImpl: FetchLike,
   ) {}

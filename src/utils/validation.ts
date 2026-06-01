@@ -1,23 +1,23 @@
 import { isP3PEnvironment } from "../config";
-import { CreateMandateOptions, PaymentGateway, PaymentMethod, PluralSellerConfig } from "../types";
+import { CreateMandateOptions, PaymentGateway, PaymentMethod, PineLabsOnlineServerConfig } from "../types";
 
-export function validateConfig(config: PluralSellerConfig): void {
+export function validateConfig(config: PineLabsOnlineServerConfig): void {
   const hasClientCredentials = Boolean(config.clientId && config.clientSecret);
-  if (!hasClientCredentials || !config.challengeSecretKey) {
-    throw new Error("PluralSellerConfig: clientId and clientSecret are required, plus challengeSecretKey");
+  if (!hasClientCredentials) {
+    throw new Error("PineLabsOnlineServerConfig: clientId and clientSecret are required");
   }
   if (!isP3PEnvironment(config.env)) {
-    throw new Error("PluralSellerConfig: env must be P3PEnvironment.SANDBOX or P3PEnvironment.PRODUCTION");
+    throw new Error("PineLabsOnlineServerConfig: env must be P3PEnvironment.SANDBOX or P3PEnvironment.PRODUCTION");
   }
   if (config.paymentGateway !== PaymentGateway.PineLabsOnline) {
-    throw new Error("PluralSellerConfig: paymentGateway must be PaymentGateway.PineLabsOnline");
+    throw new Error("PineLabsOnlineServerConfig: paymentGateway must be PaymentGateway.PineLabsOnline");
   }
   if (!Array.isArray(config.availablePaymentMethods) || config.availablePaymentMethods.length === 0) {
-    throw new Error("PluralSellerConfig: availablePaymentMethods must contain at least one payment method");
+    throw new Error("PineLabsOnlineServerConfig: availablePaymentMethods must contain at least one payment method");
   }
   for (const paymentMethod of config.availablePaymentMethods) {
     if (!isSupportedPaymentMethod(paymentMethod)) {
-      throw new Error(`PluralSellerConfig: unsupported payment method "${paymentMethod}"`);
+      throw new Error(`PineLabsOnlineServerConfig: unsupported payment method "${paymentMethod}"`);
     }
   }
 }
@@ -41,7 +41,7 @@ export function validateCreateMandateOptions(options: CreateMandateOptions): voi
 }
 
 export function isSupportedPaymentMethod(value: unknown): value is PaymentMethod {
-  return value === PaymentMethod.UpiSbmd || value === PaymentMethod.Crypto;
+  return value === PaymentMethod.UPI_RESERVE_PAY || value === PaymentMethod.Crypto;
 }
 
 export function normalizeMobileNumber(value: string): string {

@@ -5,7 +5,7 @@ import {
   ChargeOptions,
   CreateMandateOptions,
   Mandate,
-  PluralSellerConfig,
+  PineLabsOnlineServerConfig,
   ReceiptContext,
   ReceiptData,
   VerificationResult,
@@ -18,7 +18,7 @@ import { CaptureClient } from "./capture-client";
 import { ChallengeGenerator } from "./challenge-generator";
 import { CredentialVerifier } from "./credential-verifier";
 
-export class PluralP3PInstance {
+export class PineLabsOnlineP3PInstance {
   constructor(
     private challengeGenerator: ChallengeGenerator,
     private credentialVerifier: CredentialVerifier,
@@ -31,7 +31,7 @@ export class PluralP3PInstance {
     return this.challengeGenerator.generate(options);
   }
 
-  /** Verify `P3P-Credential: Payment <payload>` from the buyer. */
+  /** Verify `P3P-Credential: Payment <payload>` from the client. */
   verifyCredential(credentialHeader?: string): Promise<VerificationResult> {
     return this.credentialVerifier.verify(credentialHeader);
   }
@@ -62,12 +62,12 @@ export class PluralP3PInstance {
   }
 }
 
-export class PluralP3P {
-  /** Create a seller SDK instance from `PluralSellerConfig`. */
-  static create(config: PluralSellerConfig): PluralP3PInstance {
+export class PineLabsOnlineP3P {
+  /** Create a server SDK instance from `PineLabsOnlineServerConfig`. */
+  static create(config: PineLabsOnlineServerConfig): PineLabsOnlineP3PInstance {
     validateConfig(config);
     const resolvedConfig = withP3PEnvironmentDefaults(config);
-    return new PluralP3PInstance(
+    return new PineLabsOnlineP3PInstance(
       new ChallengeGenerator(resolvedConfig),
       new CredentialVerifier(resolvedConfig),
       new CaptureClient(resolvedConfig),

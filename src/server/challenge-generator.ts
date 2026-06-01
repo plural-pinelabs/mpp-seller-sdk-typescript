@@ -1,6 +1,6 @@
-import { Challenge, ChallengeRequest, ChallengeResult, ChargeOptions, PaymentGateway, PaymentMethod, PluralSellerConfig } from "../types";
+import { Challenge, ChallengeRequest, ChallengeResult, ChargeOptions, PaymentMethod, PineLabsOnlineServerConfig } from "../types";
 import { encodeJson } from "../utils/base64url";
-import { computeChallengeId } from "../utils/hmac";
+import { computeChallengeId, deriveChallengeHmacKey } from "../utils/hmac";
 import { validateConfig } from "../utils/validation";
 
 const DEFAULT_EXPIRY_SECONDS = 300;
@@ -9,15 +9,13 @@ export class ChallengeGenerator {
   private readonly secretKey: string;
   private readonly realm: string;
   private readonly defaultExpirySeconds: number;
-  private readonly paymentGateway: PaymentGateway;
   private readonly availablePaymentMethods: PaymentMethod[];
 
-  constructor(config: PluralSellerConfig) {
+  constructor(config: PineLabsOnlineServerConfig) {
     validateConfig(config);
-    this.secretKey = config.challengeSecretKey;
+    this.secretKey = deriveChallengeHmacKey(config.clientSecret);
     this.realm = config.realm ?? config.env;
     this.defaultExpirySeconds = config.defaultChallengeExpirySeconds ?? DEFAULT_EXPIRY_SECONDS;
-    this.paymentGateway = config.paymentGateway;
     this.availablePaymentMethods = [...config.availablePaymentMethods];
   }
 
@@ -35,7 +33,6 @@ export class ChallengeGenerator {
     const challengeId = await computeChallengeId(
       this.secretKey,
       this.realm,
-      this.paymentGateway,
       "charge",
       encodeJson(request),
       expires,
@@ -43,7 +40,6 @@ export class ChallengeGenerator {
     const challenge: Challenge = {
       id: challengeId,
       realm: this.realm,
-      paymentGateway: this.paymentGateway,
       intent: "charge",
       request,
       expires,

@@ -1,19 +1,19 @@
 {
-  "name": "@pine-labs-online/p3p-seller-sdk",
-  "version": "0.1.0",
-  "description": "Plural P3P Seller SDK - Plural P3P server middleware (TypeScript)",
+  "name": "@pine-labs-online/p3p-server-sdk",
+  "version": "0.1.3",
+  "description": "Pine Labs Online P3P Server SDK - Pine Labs Online P3P server middleware (TypeScript)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mishrasanjeev/agentic-org.git"
+    "url": "https://github.com/plural-pinelabs/mpp-server-sdk-typescript"
   },
   "keywords": [
     "p3p",
     "x402",
     "payment",
-    "seller",
+    "server",
     "pinelabs",
     "upi",
     "sbmd",

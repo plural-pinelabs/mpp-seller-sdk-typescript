@@ -5,7 +5,7 @@ import {
   FetchLike,
   Mandate,
   P3PError,
-  PluralSellerConfig,
+  PineLabsOnlineServerConfig,
 } from "../types";
 import { requestWithRetry, safeJson } from "../utils/http";
 import { asRecord, parseMandate } from "../utils/parsers";
@@ -17,7 +17,7 @@ export class ApiClient {
   private readonly fetchImpl: FetchLike;
   private readonly auth: AuthManager;
 
-  constructor(private config: PluralSellerConfig) {
+  constructor(private config: PineLabsOnlineServerConfig) {
     this.config = withP3PEnvironmentDefaults(config);
     this.baseUrl = stripSlash(resolveP3PBaseUrl(this.config.env));
     this.fetchImpl = this.config.fetch ?? globalThis.fetch?.bind(globalThis);
@@ -33,7 +33,7 @@ export class ApiClient {
     const mobileNumber = normalizeMobileNumber(options.mobileNumber ?? "");
     const customerReference = options.customerReference ?? options.customerId ?? mobileNumber;
     const body: Record<string, unknown> = {
-      type: options.paymentMethod ?? this.config.availablePaymentMethods[0],
+      payment_method: options.paymentMethod ?? this.config.availablePaymentMethods[0],
       customer: customerPayload(customerReference, mobileNumber),
       amount: amountPayload(options.amount),
       validity_in_days: options.validityInDays ?? 7,

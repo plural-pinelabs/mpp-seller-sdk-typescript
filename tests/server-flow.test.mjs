@@ -4,15 +4,17 @@ import test from "node:test";
 
 import {
   Amount,
+  CHALLENGE_HMAC_KEY_PREFIX,
   ChargeOptions,
   P3PError,
   P3PEnvironment,
   PaymentGateway,
   PaymentMethod,
-  PluralP3P,
+  PineLabsOnlineP3P,
   buildRequestHash,
   buildReceiptHeader,
   decidePayment,
+  deriveChallengeHmacKey,
 } from "../dist/index.js";
 
 function response(status, body, headers = {}) {
@@ -22,12 +24,11 @@ function response(status, body, headers = {}) {
   });
 }
 
-function config(fetchImpl, availablePaymentMethods = [PaymentMethod.UpiSbmd, PaymentMethod.Crypto]) {
+function config(fetchImpl, availablePaymentMethods = [PaymentMethod.UPI_RESERVE_PAY, PaymentMethod.Crypto]) {
   return {
-    clientId: "seller-client",
-    clientSecret: "seller-secret",
-    challengeSecretKey: "shared-hmac-secret",
-    realm: "Plural P3P",
+    clientId: "server-client",
+    clientSecret: "server-secret",
+    realm: "Pine Labs Online P3P",
     env: P3PEnvironment.SANDBOX,
     paymentGateway: PaymentGateway.PineLabsOnline,
     availablePaymentMethods,
@@ -40,7 +41,7 @@ function encodeJson(value) {
 }
 
 test("generates and verifies signed payment credentials", async () => {
-  const p3p = PluralP3P.create(config(globalThis.fetch));
+  const p3p = PineLabsOnlineP3P.create(config(globalThis.fetch));
   const challenge = await p3p.generateChallenge(
     new ChargeOptions(new Amount(15000, "INR"), "/api/premium"),
   );
@@ -48,13 +49,13 @@ test("generates and verifies signed payment credentials", async () => {
   const credentialHeader = `Payment ${Buffer.from(
     JSON.stringify({
       challenge: challenge.challenge,
-      source: "buyer-client",
+      source: "client-client",
       payload: {
         type: "token",
         token: "P3P_TOK_123",
         customer_reference: "cust-ref-123",
         mobile_number: "9876543210",
-        payment_method: PaymentMethod.UpiSbmd,
+        payment_method: PaymentMethod.UPI_RESERVE_PAY,
       },
     }),
   ).toString("base64url")}`;
@@ -63,25 +64,56 @@ test("generates and verifies signed payment credentials", async () => {
   assert.equal(verification.valid, true);
   assert.equal(verification.credential.payload.customer_reference, "cust-ref-123");
   assert.equal(verification.credential.payload.mobile_number, "9876543210");
-  assert.equal(verification.credential.payload.payment_method, PaymentMethod.UpiSbmd);
+  assert.equal(verification.credential.payload.payment_method, PaymentMethod.UPI_RESERVE_PAY);
 });
 
-test("generated 402 challenge advertises configured gateway and payment methods", async () => {
-  const p3p = PluralP3P.create(config(globalThis.fetch));
+test("server derives challenge HMAC key from clientSecret", async () => {
+  assert.equal(CHALLENGE_HMAC_KEY_PREFIX, "p3p-challenge-v1:");
+  assert.equal(deriveChallengeHmacKey("server-secret"), "p3p-challenge-v1:server-secret");
+
+  const p3p = PineLabsOnlineP3P.create(config(globalThis.fetch));
+  const generated = await p3p.generateChallenge(
+    new ChargeOptions(new Amount(100, "INR"), "/api/premium"),
+  );
+  const credentialHeader = `Payment ${Buffer.from(
+    JSON.stringify({
+      challenge: generated.challenge,
+      source: "client-client",
+      payload: {
+        type: "token",
+        token: "P3P_TOK_123",
+        payment_method: PaymentMethod.UPI_RESERVE_PAY,
+      },
+    }),
+  ).toString("base64url")}`;
+
+  const valid = await p3p.verifyCredential(credentialHeader);
+  const invalid = await PineLabsOnlineP3P.create({
+    ...config(globalThis.fetch),
+    clientSecret: "different-server-secret",
+  }).verifyCredential(credentialHeader);
+
+  assert.equal(valid.valid, true);
+  assert.equal(invalid.valid, false);
+  assert.match(invalid.error, /HMAC verification failed/i);
+});
+
+test("generated 402 challenge omits deprecated gateway and advertises payment methods", async () => {
+  const p3p = PineLabsOnlineP3P.create(config(globalThis.fetch));
   const result = await p3p.generateChallenge(
     new ChargeOptions(new Amount(15000, "INR"), "/api/premium"),
   );
 
-  assert.equal(result.challenge.paymentGateway, PaymentGateway.PineLabsOnline);
+  assert.equal(result.challenge.paymentGateway, undefined);
   assert.deepEqual(result.challenge.request.availablePaymentMethods, [
-    PaymentMethod.UpiSbmd,
+    PaymentMethod.UPI_RESERVE_PAY,
     PaymentMethod.Crypto,
   ]);
 
   const decoded = JSON.parse(Buffer.from(result.encoded, "base64url").toString("utf8"));
-  assert.equal(decoded.paymentGateway, PaymentGateway.PineLabsOnline);
+  assert.equal("paymentGateway" in decoded, false);
   assert.deepEqual(decoded.request.availablePaymentMethods, [
-    PaymentMethod.UpiSbmd,
+    PaymentMethod.UPI_RESERVE_PAY,
     PaymentMethod.Crypto,
   ]);
 });
@@ -106,20 +138,20 @@ test("decidePayment captures payment through central auth and P3P debit", async 
     calls.push({ path: parsed.pathname, init });
 
     if (parsed.pathname === "/api/auth/v1/token") {
-      return response(200, { data: { access_token: "seller-access-token", expires_in: 3600 } });
+      return response(200, { data: { access_token: "server-access-token", expires_in: 3600 } });
     }
 
     if (parsed.pathname === "/mpp/v1/debit") {
-      assert.equal(init.headers.Authorization, "Bearer seller-access-token");
+      assert.equal(init.headers.Authorization, "Bearer server-access-token");
       assert.equal(init.headers["X-Customer-Key"], undefined);
       assert.equal("Merchant-ID" in init.headers, false);
       const body = JSON.parse(init.body);
       assert.deepEqual(body.customer, { mobile_number: "9876543210" });
       assert.equal(body.payment_token, "P3P_TOK_123");
-      assert.equal(body.type, PaymentMethod.Crypto);
+      assert.equal(body.payment_method, PaymentMethod.Crypto);
       assert.equal(body.challenge_id, generated.challenge.id);
       assert.deepEqual(body.payment_amount, { value: 100, currency: "INR" });
-      assert.equal(init.headers["Request-Hash"], buildRequestHash(body));
+      assert.equal("Request-Hash" in init.headers, false);
       return response(200, {
         data: {
           type: "SBMD",
@@ -139,14 +171,14 @@ test("decidePayment captures payment through central auth and P3P debit", async 
     return response(404, { error: "not found" });
   };
 
-  const p3p = PluralP3P.create(config(fetchImpl));
+  const p3p = PineLabsOnlineP3P.create(config(fetchImpl));
   const generated = await p3p.generateChallenge(
     new ChargeOptions(new Amount(100, "INR"), "/rides/confirm"),
   );
   const credentialHeader = `Payment ${Buffer.from(
     JSON.stringify({
       challenge: generated.challenge,
-      source: "buyer-client",
+      source: "client-client",
       payload: {
         type: "token",
         token: "P3P_TOK_123",
@@ -184,14 +216,14 @@ test("server SDK creates mandates without exposing token creation", async () => 
     calls.push({ path: parsed.pathname, init });
 
     if (parsed.pathname === "/api/auth/v1/token") {
-      return response(200, { data: { access_token: "seller-access-token", expires_in: 3600 } });
+      return response(200, { data: { access_token: "server-access-token", expires_in: 3600 } });
     }
 
     if (parsed.pathname === "/mpp/v1/pre-authorize") {
-      assert.equal(init.headers.Authorization, "Bearer seller-access-token");
+      assert.equal(init.headers.Authorization, "Bearer server-access-token");
       assert.equal(init.headers["X-Customer-Key"], undefined);
       assert.deepEqual(JSON.parse(init.body), {
-        type: "SBMD",
+        payment_method: "SBMD",
         customer: {
           mobile_number: "9876543210",
         },
@@ -220,7 +252,7 @@ test("server SDK creates mandates without exposing token creation", async () => 
     return response(404, { error: "not found" });
   };
 
-  const p3p = PluralP3P.create(config(fetchImpl));
+  const p3p = PineLabsOnlineP3P.create(config(fetchImpl));
   const mandate = await p3p.createMandate({
     amount: new Amount(500000, "INR"),
     customerReference: "cust-ref-123",
@@ -251,7 +283,7 @@ test("server SDK normalizes UAT debit response shape", async () => {
     calls.push({ path: parsed.pathname, init });
 
     if (parsed.pathname === "/api/auth/v1/token") {
-      return response(200, { data: { access_token: "seller-access-token", expires_in: 3600 } });
+      return response(200, { data: { access_token: "server-access-token", expires_in: 3600 } });
     }
 
     if (parsed.pathname === "/mpp/v1/debit") {
@@ -283,11 +315,11 @@ test("server SDK normalizes UAT debit response shape", async () => {
     return response(404, { error: "not found" });
   };
 
-  const p3p = PluralP3P.create(config(fetchImpl));
+  const p3p = PineLabsOnlineP3P.create(config(fetchImpl));
   const capture = await p3p.capture({
     token: "P3P_TOK_123",
     amount: new Amount(300, "INR"),
-    paymentMethod: PaymentMethod.UpiSbmd,
+    paymentMethod: PaymentMethod.UPI_RESERVE_PAY,
     customerReference: "abcd0008",
     mobileNumber: "9039498008",
     challengeId: "cid",
@@ -315,7 +347,7 @@ test("decidePayment returns upstream capture code and message for 5xx debit fail
     const parsed = new URL(String(input));
 
     if (parsed.pathname === "/api/auth/v1/token") {
-      return response(200, { data: { access_token: "seller-access-token", expires_in: 3600 } });
+      return response(200, { data: { access_token: "server-access-token", expires_in: 3600 } });
     }
 
     if (parsed.pathname === "/mpp/v1/debit") {
@@ -328,28 +360,28 @@ test("decidePayment returns upstream capture code and message for 5xx debit fail
     return response(404, { error: "not found" });
   };
 
-  const sellerConfig = config(fetchImpl);
-  const p3p = PluralP3P.create(sellerConfig);
+  const serverConfig = config(fetchImpl);
+  const p3p = PineLabsOnlineP3P.create(serverConfig);
   const generated = await p3p.generateChallenge(
     new ChargeOptions(new Amount(100, "INR"), "/rides/confirm"),
   );
   const credentialHeader = `Payment ${Buffer.from(
     JSON.stringify({
       challenge: generated.challenge,
-      source: "buyer-client",
+      source: "client-client",
       payload: {
         type: "token",
         token: "P3P_TOK_123",
         customer_reference: "cust-ref-123",
         mobile_number: "9876543210",
-        payment_method: PaymentMethod.UpiSbmd,
+        payment_method: PaymentMethod.UPI_RESERVE_PAY,
       },
     }),
   ).toString("base64url")}`;
 
   const decision = await decidePayment({
     credentialHeader,
-    config: sellerConfig,
+    config: serverConfig,
     chargeOptions: new ChargeOptions(new Amount(100, "INR"), "/rides/confirm"),
   });
 
@@ -362,36 +394,34 @@ test("decidePayment returns upstream capture code and message for 5xx debit fail
   });
 });
 
-test("seller config requires Pine client credentials", () => {
+test("server config requires Pine client credentials", () => {
   assert.throws(
     () =>
-      PluralP3P.create({
-        challengeSecretKey: "shared-hmac-secret",
+      PineLabsOnlineP3P.create({
         env: P3PEnvironment.SANDBOX,
         paymentGateway: PaymentGateway.PineLabsOnline,
-        availablePaymentMethods: [PaymentMethod.UpiSbmd],
+        availablePaymentMethods: [PaymentMethod.UPI_RESERVE_PAY],
         fetch: globalThis.fetch,
       }),
     /clientId and clientSecret/i,
   );
 });
 
-test("seller config rejects static access tokens and requires client credentials", () => {
+test("server config rejects static access tokens and requires client credentials", () => {
   assert.throws(
     () =>
-      PluralP3P.create({
-        accessToken: "Bearer configured-seller-token",
-        challengeSecretKey: "shared-hmac-secret",
+      PineLabsOnlineP3P.create({
+        accessToken: "Bearer configured-server-token",
         env: P3PEnvironment.SANDBOX,
         paymentGateway: PaymentGateway.PineLabsOnline,
-        availablePaymentMethods: [PaymentMethod.UpiSbmd],
+        availablePaymentMethods: [PaymentMethod.UPI_RESERVE_PAY],
         fetch: globalThis.fetch,
       }),
     /clientId and clientSecret/i,
   );
 });
 
-test("seller env selects sandbox URLs and sandbox retry defaults", async () => {
+test("server env selects sandbox URLs and sandbox retry defaults", async () => {
   const authCalls = [];
   const fetchImpl = async (input, init = {}) => {
     const parsed = new URL(String(input));
@@ -402,13 +432,12 @@ test("seller env selects sandbox URLs and sandbox retry defaults", async () => {
     return response(404, { error: "not found" });
   };
 
-  const p3p = PluralP3P.create({
-    clientId: "seller-client",
-    clientSecret: "seller-secret",
-    challengeSecretKey: "shared-hmac-secret",
+  const p3p = PineLabsOnlineP3P.create({
+    clientId: "server-client",
+    clientSecret: "server-secret",
     env: P3PEnvironment.SANDBOX,
     paymentGateway: PaymentGateway.PineLabsOnline,
-    availablePaymentMethods: [PaymentMethod.UpiSbmd],
+    availablePaymentMethods: [PaymentMethod.UPI_RESERVE_PAY],
     initialRetryDelayMs: 1,
     fetch: fetchImpl,
   });
@@ -440,15 +469,15 @@ test("buildRequestHash uses recursive canonical JSON", () => {
 });
 
 test("decidePayment rejects selected payment methods outside the signed challenge", async () => {
-  const sellerConfig = config(globalThis.fetch, [PaymentMethod.UpiSbmd]);
-  const p3p = PluralP3P.create(sellerConfig);
+  const serverConfig = config(globalThis.fetch, [PaymentMethod.UPI_RESERVE_PAY]);
+  const p3p = PineLabsOnlineP3P.create(serverConfig);
   const generated = await p3p.generateChallenge(
     new ChargeOptions(new Amount(100, "INR"), "/rides/confirm"),
   );
   const credentialHeader = `Payment ${Buffer.from(
     JSON.stringify({
       challenge: generated.challenge,
-      source: "buyer-client",
+      source: "client-client",
       payload: {
         type: "token",
         token: "P3P_TOK_123",
@@ -460,7 +489,7 @@ test("decidePayment rejects selected payment methods outside the signed challeng
 
   const decision = await decidePayment({
     credentialHeader,
-    config: sellerConfig,
+    config: serverConfig,
     chargeOptions: new ChargeOptions(new Amount(100, "INR"), "/rides/confirm"),
   });
 
@@ -484,7 +513,7 @@ test("buildReceiptHeader encodes settlement data", () => {
       payment_status: "CONFIRMED",
       amount: new Amount(500, "INR"),
       payment_gateway: PaymentGateway.PineLabsOnline,
-      payment_method: PaymentMethod.UpiSbmd,
+      payment_method: PaymentMethod.UPI_RESERVE_PAY,
       upi_txn_id: "",
       receipt: {},
       description: undefined,
@@ -502,7 +531,7 @@ test("buildReceiptHeader encodes settlement data", () => {
   assert.equal(decoded.challengeId, "ch_1");
   assert.equal("method" in decoded, false);
   assert.equal(decoded.paymentGateway, PaymentGateway.PineLabsOnline);
-  assert.equal(decoded.paymentMethod, PaymentMethod.UpiSbmd);
+  assert.equal(decoded.paymentMethod, PaymentMethod.UPI_RESERVE_PAY);
   assert.equal(decoded.orderId, "ord_1");
   assert.equal(decoded.merchantOrderReference, "order-1");
 });
