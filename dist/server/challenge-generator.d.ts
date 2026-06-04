@@ -1,11 +1,10 @@
-import { ChallengeResult, ChargeOptions, PluralSellerConfig } from "../types";
+import { ChallengeResult, ChargeOptions, PineLabsOnlineServerConfig } from "../types";
 export declare class ChallengeGenerator {
     private readonly secretKey;
     private readonly realm;
     private readonly defaultExpirySeconds;
-    private readonly paymentGateway;
     private readonly availablePaymentMethods;
-    constructor(config: PluralSellerConfig);
+    constructor(config: PineLabsOnlineServerConfig);
     /** Generate a challenge and problem-details response for HTTP 402. */
     generate(options: ChargeOptions): Promise<ChallengeResult>;
 }

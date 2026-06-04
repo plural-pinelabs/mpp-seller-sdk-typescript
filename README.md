@@ -7,7 +7,7 @@ captures payment through P3P debit, and builds `Payment-Receipt` headers.
 ## Install
 
 ```bash
-npm install @pine-labs-online/p3p-server-sdk
+npm install p3p-server-sdk
 ```
 
 Requires Node.js `>=18` or another runtime with `fetch`, `AbortSignal.timeout`,
@@ -23,7 +23,7 @@ import {
   PaymentGateway,
   PaymentMethod,
   PineLabsOnlineP3P,
-} from "@pine-labs-online/p3p-server-sdk";
+} from "p3p-server-sdk";
 
 const p3p = PineLabsOnlineP3P.create({
   clientId: "server-client-id",
@@ -66,12 +66,12 @@ Environment defaults:
 
 | Env | URL | Timeout | Retries | Initial retry delay |
 |---|---|---:|---:|---:|
-| `P3PEnvironment.SANDBOX` | `https://pluraluat.v2.pinepg.in` | 30000 ms | 2 | 300 ms |
-| `P3PEnvironment.PRODUCTION` | `https://api.pluralpay.in` | 10000 ms | 2 | 200 ms |
+| `P3PEnvironment.SANDBOX` | `https://pluraluat.v2.pinepg.in` | 60000 ms | 2 | 300 ms |
+| `P3PEnvironment.PRODUCTION` | `https://api.pluralpay.in` | 45000 ms | 2 | 200 ms |
 
 The generated challenge includes:
 
-- `request.availablePaymentMethods: ["SBMD", "CRYPTO"]`
+- `request.availablePaymentMethods: ["RESERVE_PAY", "CRYPTO"]`
 
 During verification, the server SDK rejects client credentials whose
 `payload.payment_method` is not advertised by the signed challenge and server
@@ -84,7 +84,7 @@ import {
   Amount,
   ChargeOptions,
   decidePayment,
-} from "@pine-labs-online/p3p-server-sdk";
+} from "p3p-server-sdk";
 
 const decision = await decidePayment({
   credentialHeader: request.headers.get("P3P-Credential") ?? undefined,
@@ -114,9 +114,20 @@ return response;
 5. The protected handler proceeds and the response receives
    `Payment-Receipt`.
 
+If `/mpp/v1/debit` returns `202 Accepted`, the SDK treats that as an
+accepted-but-processing debit:
+
+- retries the same debit with the same `Idempotency-Key`
+- respects `Retry-After` when Pine Labs returns it
+- falls back to `initialRetryDelayMs` otherwise
+- counts those pending retries against `maxRetries`
+
+If pending debit retries are exhausted and the debit is still non-terminal, the
+middleware returns `202` and the protected resource must stay withheld.
+
 The debit request body uses the current P3P contract:
 
-- `type` is the selected payment method, for example `"SBMD"`.
+- `type` is the selected payment method, for example `"RESERVE_PAY"`.
 - `customer.merchant_customer_reference` is populated from the client
   credential.
 - `payment_amount.value` is numeric minor units.
@@ -144,6 +155,16 @@ The server SDK intentionally does not expose token creation. The client/customer
 flow obtains a one-shot token and sends it back in the `P3P-Credential: Payment`
 credential. The server SDK verifies that credential and then calls
 `POST /mpp/v1/debit`.
+
+The server SDK also exposes debit status lookup by idempotency key:
+
+```ts
+const latestDebit = await p3p.getDebitStatus("idem_key_123");
+```
+
+This calls `GET /mpp/v1/debit/{id}` and returns the same debit payload family
+as the original debit call, so application code can reconcile a pending payment
+later without re-running the full paid request flow.
 
 ## Development
 

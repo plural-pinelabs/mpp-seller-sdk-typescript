@@ -9,6 +9,7 @@ import {
 } from "../../types";
 import { buildReceiptHeader } from "../../utils/receipt-builder";
 import { CaptureClient } from "../capture-client";
+import { isPendingDebitStatus } from "../capture-client";
 import { ChallengeGenerator } from "../challenge-generator";
 import { CredentialVerifier } from "../credential-verifier";
 
@@ -51,9 +52,29 @@ export async function decidePayment(options: {
       mobileNumber: verification.credential.payload.mobile_number,
       challengeId: verification.credential.challenge.id,
     });
+    if (captureResult.pending || isPendingDebitStatus(captureResult.status)) {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (typeof captureResult.retryAfter === "number" && captureResult.retryAfter > 0) {
+        headers["Retry-After"] = String(Math.ceil(captureResult.retryAfter / 1000));
+      }
+      const problemDetails = {
+        status: "PENDING",
+        idempotencyKey: String(captureResult.idempotencyKey ?? ""),
+        message: String(captureResult.message ?? "Payment accepted and still processing"),
+        debitStatus: String(captureResult.status ?? "PENDING"),
+        ...(typeof captureResult.retryAfter === "number" ? { retryAfter: captureResult.retryAfter } : {}),
+      };
+      return {
+        action: "pending",
+        status: 202,
+        headers,
+        captureResult,
+        credential: verification.credential,
+        problemDetails,
+      };
+    }
     const receiptHeader = buildReceiptHeader(captureResult, verification.credential.challenge.id, {
       paymentGateway: options.config.paymentGateway,
-      paymentMethod: verification.credential.payload.payment_method,
     });
     return {
       action: "proceed",

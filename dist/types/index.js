@@ -4,7 +4,7 @@ exports.P3PVerificationError = exports.P3PCaptureError = exports.P3PError = expo
 exports.PAYMENT_CREDENTIAL_HEADER = "P3P-Credential";
 exports.PAYMENT_HEADER_PREFIX = "Payment ";
 exports.PAYMENT_RECEIPT_PREFIX = "Payment ";
-/** Payment gateway used by seller challenges and buyer credentials. */
+/** Payment gateway enum retained for capture/receipt context. */
 var PaymentGateway;
 (function (PaymentGateway) {
     PaymentGateway["PineLabsOnline"] = "PINE LABS ONLINE";
@@ -12,7 +12,7 @@ var PaymentGateway;
 /** Payment methods supported by the current P3P service payload contract. */
 var PaymentMethod;
 (function (PaymentMethod) {
-    PaymentMethod["UpiSbmd"] = "SBMD";
+    PaymentMethod["RESERVE_PAY"] = "RESERVE_PAY";
     PaymentMethod["Crypto"] = "CRYPTO";
 })(PaymentMethod || (exports.PaymentMethod = PaymentMethod = {}));
 /** Money amount expressed in the smallest unit for the currency, e.g. paise for INR. */
@@ -29,7 +29,7 @@ class Amount {
     }
 }
 exports.Amount = Amount;
-/** Payment challenge/capture context for a seller-protected resource. */
+/** Payment challenge/capture context for a server-protected resource. */
 class ChargeOptions {
     amount;
     resource;
@@ -38,13 +38,13 @@ class ChargeOptions {
     metadata;
     challengeExpirySeconds;
     constructor(
-    /** Amount the seller requires before allowing the protected resource request. */
+    /** Amount the server requires before allowing the protected resource request. */
     amount, 
     /** Protected resource identifier embedded in the 402 challenge. */
     resource, 
     /** Optional description propagated to capture/debit metadata where supported. */
     description, 
-    /** Optional stable seller order reference retained for compatibility; current debit sends it as the idempotency key when no explicit key is provided. */
+    /** Optional stable server order reference retained for compatibility; current debit sends it as the idempotency key when no explicit key is provided. */
     merchantOrderReference, 
     /** Optional metadata used by adapters and capture helpers. */
     metadata, 
@@ -81,7 +81,7 @@ class P3PError extends Error {
     }
 }
 exports.P3PError = P3PError;
-/** Error wrapper used when seller debit/capture fails. */
+/** Error wrapper used when server debit/capture fails. */
 class P3PCaptureError extends Error {
     captureError;
     constructor(message, captureError) {

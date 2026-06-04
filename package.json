@@ -1,6 +1,6 @@
 {
-  "name": "@pine-labs-online/p3p-server-sdk",
-  "version": "0.1.3",
+  "name": "p3p-server-sdk",
+  "version": "0.1.5",
   "description": "Pine Labs Online P3P Server SDK - Pine Labs Online P3P server middleware (TypeScript)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

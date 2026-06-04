@@ -6,7 +6,7 @@ const receipt_builder_1 = require("../../utils/receipt-builder");
 const capture_client_1 = require("../capture-client");
 const challenge_generator_1 = require("../challenge-generator");
 const credential_verifier_1 = require("../credential-verifier");
-/** Decide how a seller route should respond to an incoming paid-resource request. */
+/** Decide how a server route should respond to an incoming paid-resource request. */
 async function decidePayment(options) {
     const challengeGenerator = new challenge_generator_1.ChallengeGenerator(options.config);
     const credentialVerifier = new credential_verifier_1.CredentialVerifier(options.config);

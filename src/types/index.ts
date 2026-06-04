@@ -14,7 +14,7 @@ export enum PaymentGateway {
 
 /** Payment methods supported by the current P3P service payload contract. */
 export enum PaymentMethod {
-  UPI_RESERVE_PAY = "SBMD",
+  UPI_RESERVE_PAY = "RESERVE_PAY",
   Crypto = "CRYPTO",
 }
 
@@ -220,30 +220,23 @@ export interface CaptureOptions {
   challengeId?: string;
 }
 
-/** Normalized debit/capture response from the P3P service. */
-export interface CaptureResult {
-  capture_id: string;
-  object: string;
-  mandate_id: string;
-  token_id: string;
-  customer_id: string;
-  merchant_id: string;
-  order_id: string;
-  order_status: string;
-  payment_id: string;
-  payment_status: string;
+/** Raw debit/capture response from the P3P service with SDK context fields attached. */
+export interface CaptureResult extends Record<string, unknown> {
   payment_gateway?: PaymentGateway;
   payment_method?: PaymentMethod;
-  amount: Amount;
-  upi_txn_id: string;
-  receipt: Record<string, unknown>;
-  description?: string;
-  merchant_order_reference?: string;
-  metadata?: Record<string, unknown>;
-  settled_at: string;
-  created_at: string;
-  raw: Record<string, unknown>;
+  status?: string;
+  idempotencyKey?: string;
+  pending?: boolean;
+  message?: string;
+  retryAfter?: number;
 }
+
+export const PENDING_DEBIT_STATUSES = [
+  "PENDING",
+  "CREATED",
+  "OMS_PAYMENT_SUBMITTED",
+  "PROCESSING",
+] as const;
 
 /** Settlement amount encoded in a `Payment-Receipt` header. */
 export interface Settlement {
@@ -261,7 +254,7 @@ export interface ReceiptData {
   challengeId: string;
   orderId?: string | null;
   merchantOrderReference?: string | null;
-  settlement: Settlement;
+  settlement?: Settlement;
 }
 
 /** Optional payment context encoded into a `Payment-Receipt` header. */
@@ -272,8 +265,8 @@ export interface ReceiptContext {
 
 /** Decision returned by server middleware helpers for a paid-resource request. */
 export interface PaymentDecision {
-  /** Adapter action: challenge, reject, capture error, or proceed. */
-  action: "challenge" | "invalid" | "failed" | "error" | "proceed";
+  /** Adapter action: challenge, reject, pending, capture error, or proceed. */
+  action: "challenge" | "invalid" | "failed" | "pending" | "error" | "proceed";
   /** HTTP status the framework adapter should return for non-proceed actions. */
   status: number;
   /** Response headers such as `WWW-Authenticate`, `Payment-Receipt`, or content type. */

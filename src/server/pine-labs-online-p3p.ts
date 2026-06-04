@@ -41,6 +41,11 @@ export class PineLabsOnlineP3PInstance {
     return this.captureClient.capture(options);
   }
 
+  /** Fetch debit status through `GET /mpp/v1/debit/{id}` using the debit idempotency key. */
+  getDebitStatus(idempotencyKey: string): Promise<CaptureResult> {
+    return this.captureClient.getDebitStatus(idempotencyKey);
+  }
+
   /** Create a mandate/pre-authorization through `POST /mpp/v1/pre-authorize`. */
   createMandate(options: CreateMandateOptions): Promise<Mandate> {
     return this.apiClient.createMandate(options);

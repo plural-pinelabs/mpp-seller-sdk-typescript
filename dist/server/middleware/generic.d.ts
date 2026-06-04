@@ -1,7 +1,7 @@
-import { ChargeOptions, PaymentDecision, PluralSellerConfig } from "../../types";
-/** Decide how a seller route should respond to an incoming paid-resource request. */
+import { ChargeOptions, PaymentDecision, PineLabsOnlineServerConfig } from "../../types";
+/** Decide how a server route should respond to an incoming paid-resource request. */
 export declare function decidePayment(options: {
     credentialHeader?: string;
-    config: PluralSellerConfig;
+    config: PineLabsOnlineServerConfig;
     chargeOptions: ChargeOptions;
 }): Promise<PaymentDecision>;

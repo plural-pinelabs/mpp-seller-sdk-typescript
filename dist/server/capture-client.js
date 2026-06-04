@@ -5,7 +5,6 @@ const config_1 = require("../config");
 const types_1 = require("../types");
 const http_1 = require("../utils/http");
 const parsers_1 = require("../utils/parsers");
-const request_hash_1 = require("../utils/request-hash");
 const auth_manager_1 = require("./auth-manager");
 class CaptureClient {
     config;
@@ -22,14 +21,14 @@ class CaptureClient {
         }
         this.auth = new auth_manager_1.AuthManager(this.config, this.baseUrl, this.fetchImpl);
     }
-    /** Call `/mpp/v1/debit` with idempotency and request-hash headers. */
+    /** Call `/mpp/v1/debit` with idempotency headers. */
     async capture(options) {
         resolveCustomerReference(options);
         const mobileNumber = resolveMobileNumber(options);
         const token = await this.auth.getAccessToken();
         const idempotencyKey = options.idempotencyKey ?? options.merchantOrderReference ?? randomId();
         const payload = {
-            type: options.paymentMethod,
+            payment_method: options.paymentMethod,
             customer: { mobile_number: mobileNumber },
             payment_amount: { value: options.amount.value, currency: options.amount.currency },
             payment_token: options.token,
@@ -41,7 +40,6 @@ class CaptureClient {
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${token}`,
                 "Idempotency-Key": idempotencyKey,
-                "Request-Hash": (0, request_hash_1.buildRequestHash)(payload),
             },
             body: JSON.stringify(payload),
         }, this.config);

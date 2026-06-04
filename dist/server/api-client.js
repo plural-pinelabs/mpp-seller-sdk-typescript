@@ -28,7 +28,7 @@ class ApiClient {
         const mobileNumber = (0, validation_1.normalizeMobileNumber)(options.mobileNumber ?? "");
         const customerReference = options.customerReference ?? options.customerId ?? mobileNumber;
         const body = {
-            type: options.paymentMethod ?? this.config.availablePaymentMethods[0],
+            payment_method: options.paymentMethod ?? this.config.availablePaymentMethods[0],
             customer: customerPayload(customerReference, mobileNumber),
             amount: amountPayload(options.amount),
             validity_in_days: options.validityInDays ?? 7,

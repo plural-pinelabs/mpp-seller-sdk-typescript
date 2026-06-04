@@ -19,5 +19,5 @@ __exportStar(require("./api-client"), exports);
 __exportStar(require("./capture-client"), exports);
 __exportStar(require("./challenge-generator"), exports);
 __exportStar(require("./credential-verifier"), exports);
-__exportStar(require("./plural-p3p"), exports);
+__exportStar(require("./pine-labs-online-p3p"), exports);
 __exportStar(require("./middleware"), exports);

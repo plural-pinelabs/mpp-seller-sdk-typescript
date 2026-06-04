@@ -9,13 +9,11 @@ const validation_1 = require("../utils/validation");
 class CredentialVerifier {
     secretKey;
     realm;
-    paymentGateway;
     availablePaymentMethods;
     constructor(config) {
         (0, validation_1.validateConfig)(config);
-        this.secretKey = config.challengeSecretKey || config.clientSecret;
+        this.secretKey = (0, hmac_1.deriveChallengeHmacKey)(config.clientSecret);
         this.realm = config.realm ?? config.env;
-        this.paymentGateway = config.paymentGateway;
         this.availablePaymentMethods = [...config.availablePaymentMethods];
     }
     /** Decode and validate a `P3P-Credential: Payment <payload>` header value. */
@@ -32,14 +30,11 @@ class CredentialVerifier {
             return { valid: false, error: `Failed to decode credential from ${types_1.PAYMENT_CREDENTIAL_HEADER} header` };
         }
         const challenge = credential.challenge;
-        if (!challenge.id || !challenge.realm || !challenge.paymentGateway || !challenge.request) {
+        if (!challenge.id || !challenge.realm || !challenge.request) {
             return { valid: false, credential, error: "Credential contains an incomplete challenge" };
         }
         if (challenge.realm !== this.realm) {
             return { valid: false, credential, error: `Challenge realm mismatch. Expected "${this.realm}", got "${challenge.realm}"` };
-        }
-        if (challenge.paymentGateway !== this.paymentGateway) {
-            return { valid: false, credential, error: `Unsupported payment gateway: ${challenge.paymentGateway}` };
         }
         if (!challenge.request.availablePaymentMethods.length) {
             return { valid: false, credential, error: "Challenge missing available payment methods" };
@@ -47,7 +42,7 @@ class CredentialVerifier {
         if (!Number.isFinite(Date.parse(challenge.expires)) || Date.parse(challenge.expires) <= Date.now()) {
             return { valid: false, credential, error: "Challenge has expired" };
         }
-        const expectedId = await (0, hmac_1.computeChallengeId)(this.secretKey, challenge.realm, challenge.paymentGateway, challenge.intent, (0, base64url_1.encodeJson)(challenge.request), challenge.expires);
+        const expectedId = await (0, hmac_1.computeChallengeId)(this.secretKey, challenge.realm, challenge.intent, (0, base64url_1.encodeJson)(challenge.request), challenge.expires);
         if (challenge.id !== expectedId) {
             return {
                 valid: false,
@@ -66,7 +61,7 @@ class CredentialVerifier {
             return {
                 valid: false,
                 credential,
-                error: `Selected payment method ${credential.payload.payment_method} is not accepted by this seller challenge`,
+                error: `Selected payment method ${credential.payload.payment_method} is not accepted by this server challenge`,
             };
         }
         return { valid: true, credential };
@@ -105,10 +100,10 @@ function dictToCredential(raw) {
     };
 }
 function parsePaymentGateway(value) {
-    return value === types_1.PaymentGateway.PineLabsOnline ? types_1.PaymentGateway.PineLabsOnline : String(value ?? "");
+    return value === undefined || value === null ? undefined : String(value);
 }
 function parsePaymentMethod(value) {
-    if (value === types_1.PaymentMethod.UpiSbmd || value === types_1.PaymentMethod.Crypto) {
+    if (value === types_1.PaymentMethod.RESERVE_PAY || value === types_1.PaymentMethod.Crypto) {
         return value;
     }
     return String(value ?? "");

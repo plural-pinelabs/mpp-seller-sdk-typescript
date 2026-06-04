@@ -3,12 +3,13 @@ import {
   CaptureOptions,
   CaptureResult,
   FetchLike,
+  PENDING_DEBIT_STATUSES,
   P3PCaptureError,
   P3PError,
   PineLabsOnlineServerConfig,
 } from "../types";
-import { requestWithRetry, safeJson } from "../utils/http";
-import { asRecord, dictToCaptureResult } from "../utils/parsers";
+import { requestWithRetry, resolveRetryAfterDelayMs, safeJson } from "../utils/http";
+import { asRecord } from "../utils/parsers";
 import { AuthManager } from "./auth-manager";
 
 export class CaptureClient {
@@ -39,27 +40,74 @@ export class CaptureClient {
       payment_token: options.token,
       challenge_id: resolveChallengeId(options),
     };
-    const response = await requestWithRetry(this.fetchImpl, `${this.baseUrl}/mpp/v1/debit`, {
-      method: "POST",
+    const maxRetries = this.config.maxRetries ?? 0;
+    const initialRetryDelayMs = this.config.initialRetryDelayMs ?? 0;
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+      const response = await requestWithRetry(this.fetchImpl, `${this.baseUrl}/mpp/v1/debit`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          "Idempotency-Key": idempotencyKey,
+        },
+        body: JSON.stringify(payload),
+      }, this.config);
+
+      if (response.status === 202) {
+        const data = normalizeCapturePayload(await safeJson(response));
+        const retryAfter = retryDelayMs(response, initialRetryDelayMs);
+        if (attempt < maxRetries) {
+          await sleep(retryAfter);
+          continue;
+        }
+        return {
+          ...data,
+          pending: true,
+          idempotencyKey,
+          message: "Debit is still processing.",
+          retryAfter,
+          payment_gateway: this.config.paymentGateway,
+        };
+      }
+
+      if (!response.ok) {
+        const error = P3PError.fromResponse(response.status, await safeJson(response));
+        throw new P3PCaptureError(`Capture failed: ${error.message}`, error);
+      }
+      return {
+        ...normalizeCapturePayload(await response.json()),
+        payment_gateway: this.config.paymentGateway,
+      };
+    }
+    throw new P3PCaptureError("Capture failed: debit did not complete");
+  }
+
+  /** Fetch the latest debit status through `GET /mpp/v1/debit/{id}`. */
+  async getDebitStatus(idempotencyKey: string): Promise<CaptureResult> {
+    if (!idempotencyKey) {
+      throw new Error("idempotencyKey is required");
+    }
+    const token = await this.auth.getAccessToken();
+    const response = await requestWithRetry(this.fetchImpl, `${this.baseUrl}/mpp/v1/debit/${encodeURIComponent(idempotencyKey)}`, {
+      method: "GET",
       headers: {
-        "Content-Type": "application/json",
+        Accept: "application/json",
         Authorization: `Bearer ${token}`,
-        "Idempotency-Key": idempotencyKey,
       },
-      body: JSON.stringify(payload),
     }, this.config);
 
     if (!response.ok) {
-      const error = P3PError.fromResponse(response.status, await safeJson(response));
-      throw new P3PCaptureError(`Capture failed: ${error.message}`, error);
+      throw P3PError.fromResponse(response.status, await safeJson(response));
     }
-    const responsePayload = await response.json();
-    const data = asRecord(asRecord(responsePayload)?.data) ?? asRecord(responsePayload) ?? {};
-    const captureResult = dictToCaptureResult(data);
-    captureResult.payment_gateway = this.config.paymentGateway;
-    captureResult.payment_method = options.paymentMethod;
-    return captureResult;
+    return {
+      ...normalizeCapturePayload(await response.json()),
+      payment_gateway: this.config.paymentGateway,
+    };
   }
+}
+
+function normalizeCapturePayload(payload: unknown): Record<string, unknown> {
+  return asRecord(asRecord(payload)?.data) ?? asRecord(payload) ?? {};
 }
 
 function resolveCustomerReference(options: CaptureOptions): string {
@@ -100,4 +148,16 @@ function stripSlash(value: string): string {
 function normalizeMobileNumber(value: string): string {
   const digits = value.trim().replace(/\D/g, "");
   return digits.length >= 10 ? digits.slice(-10) : digits;
+}
+
+function retryDelayMs(response: Response, fallbackMs: number): number {
+  return resolveRetryAfterDelayMs(response.headers.get("Retry-After")) ?? fallbackMs;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function isPendingDebitStatus(status: unknown): boolean {
+  return PENDING_DEBIT_STATUSES.includes(String(status ?? "").trim().toUpperCase() as (typeof PENDING_DEBIT_STATUSES)[number]);
 }

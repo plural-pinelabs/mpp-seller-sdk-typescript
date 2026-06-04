@@ -9,14 +9,12 @@ class ChallengeGenerator {
     secretKey;
     realm;
     defaultExpirySeconds;
-    paymentGateway;
     availablePaymentMethods;
     constructor(config) {
         (0, validation_1.validateConfig)(config);
-        this.secretKey = config.challengeSecretKey || config.clientSecret;
+        this.secretKey = (0, hmac_1.deriveChallengeHmacKey)(config.clientSecret);
         this.realm = config.realm ?? config.env;
         this.defaultExpirySeconds = config.defaultChallengeExpirySeconds ?? DEFAULT_EXPIRY_SECONDS;
-        this.paymentGateway = config.paymentGateway;
         this.availablePaymentMethods = [...config.availablePaymentMethods];
     }
     /** Generate a challenge and problem-details response for HTTP 402. */
@@ -30,11 +28,10 @@ class ChallengeGenerator {
             resource: options.resource,
             availablePaymentMethods: this.availablePaymentMethods,
         };
-        const challengeId = await (0, hmac_1.computeChallengeId)(this.secretKey, this.realm, this.paymentGateway, "charge", (0, base64url_1.encodeJson)(request), expires);
+        const challengeId = await (0, hmac_1.computeChallengeId)(this.secretKey, this.realm, "charge", (0, base64url_1.encodeJson)(request), expires);
         const challenge = {
             id: challengeId,
             realm: this.realm,
-            paymentGateway: this.paymentGateway,
             intent: "charge",
             request,
             expires,

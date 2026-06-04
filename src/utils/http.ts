@@ -40,6 +40,21 @@ export async function safeJson(response: Response): Promise<unknown> {
   }
 }
 
+export function resolveRetryAfterDelayMs(retryAfter: string | null | undefined): number | undefined {
+  if (!retryAfter) {
+    return undefined;
+  }
+  const seconds = Number(retryAfter);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return seconds * 1000;
+  }
+  const retryAt = Date.parse(retryAfter);
+  if (Number.isFinite(retryAt)) {
+    return Math.max(0, retryAt - Date.now());
+  }
+  return undefined;
+}
+
 function withTimeout(init: RequestInit, timeoutMs: number): RequestInit {
   if (init.signal || typeof AbortSignal === "undefined" || typeof AbortSignal.timeout !== "function") {
     return init;
@@ -48,12 +63,9 @@ function withTimeout(init: RequestInit, timeoutMs: number): RequestInit {
 }
 
 function retryDelayMs(attempt: number, initialMs: number, response?: Response): number {
-  const retryAfter = response?.headers.get("Retry-After");
-  if (retryAfter) {
-    const seconds = Number(retryAfter);
-    if (Number.isFinite(seconds) && seconds > 0) {
-      return seconds * 1000;
-    }
+  const retryAfterMs = resolveRetryAfterDelayMs(response?.headers.get("Retry-After"));
+  if (retryAfterMs !== undefined) {
+    return retryAfterMs;
   }
   return initialMs * 2 ** attempt;
 }

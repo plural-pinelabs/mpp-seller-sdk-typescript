@@ -154,7 +154,8 @@ test("decidePayment captures payment through central auth and P3P debit", async 
       assert.equal("Request-Hash" in init.headers, false);
       return response(200, {
         data: {
-          type: "SBMD",
+          type: "RESERVE_PAY",
+          payment_method: PaymentMethod.UPI_RESERVE_PAY,
           payment_method_reference_id: "mnd_test",
           payment_id: "pay_123",
           merchant_order_reference: init.headers["Idempotency-Key"],
@@ -196,13 +197,14 @@ test("decidePayment captures payment through central auth and P3P debit", async 
   });
 
   assert.equal(decision.action, "proceed");
+  assert.equal(decision.captureResult.payment_method, PaymentMethod.UPI_RESERVE_PAY);
   assert.equal(decision.headers["Payment-Receipt"].startsWith("Payment "), true);
   const decodedReceipt = JSON.parse(
     Buffer.from(decision.headers["Payment-Receipt"].slice("Payment ".length), "base64url").toString("utf8"),
   );
   assert.equal("method" in decodedReceipt, false);
   assert.equal(decodedReceipt.paymentGateway, PaymentGateway.PineLabsOnline);
-  assert.equal(decodedReceipt.paymentMethod, PaymentMethod.Crypto);
+  assert.equal(decodedReceipt.paymentMethod, PaymentMethod.UPI_RESERVE_PAY);
   assert.deepEqual(
     calls.map((call) => call.path),
     ["/api/auth/v1/token", "/mpp/v1/debit"],
@@ -223,7 +225,7 @@ test("server SDK creates mandates without exposing token creation", async () => 
       assert.equal(init.headers.Authorization, "Bearer server-access-token");
       assert.equal(init.headers["X-Customer-Key"], undefined);
       assert.deepEqual(JSON.parse(init.body), {
-        payment_method: "SBMD",
+        payment_method: "RESERVE_PAY",
         customer: {
           mobile_number: "9876543210",
         },
@@ -233,7 +235,7 @@ test("server SDK creates mandates without exposing token creation", async () => 
       });
       return response(200, {
         data: {
-          type: "SBMD",
+          type: "RESERVE_PAY",
           payment_method_reference_id: "v1-sub-260528202124-aa-Upu5Jk",
           customer: {
             customer_id: "cust-v1-260528202100-aa-iDjsog",
@@ -276,7 +278,7 @@ test("server SDK creates mandates without exposing token creation", async () => 
   );
 });
 
-test("server SDK normalizes UAT debit response shape", async () => {
+test("server SDK returns raw UAT debit response fields", async () => {
   const calls = [];
   const fetchImpl = async (input, init = {}) => {
     const parsed = new URL(String(input));
@@ -288,7 +290,7 @@ test("server SDK normalizes UAT debit response shape", async () => {
 
     if (parsed.pathname === "/mpp/v1/debit") {
       return response(200, {
-        type: "SBMD",
+        type: "RESERVE_PAY",
         payment_method_reference_id: "v1-sub-260527235716-aa-TmOgVb",
         customer: {
           customer_id: "cust-v1-260527235715-aa-IawrBS",
@@ -325,21 +327,347 @@ test("server SDK normalizes UAT debit response shape", async () => {
     challengeId: "cid",
   });
 
-  assert.equal(capture.capture_id, "4d3b8b95-2a1c-4e6c-b15f-135b5fe00c70");
-  assert.equal(capture.mandate_id, "v1-sub-260527235716-aa-TmOgVb");
-  assert.equal(capture.customer_id, "cust-v1-260527235715-aa-IawrBS");
-  assert.equal(capture.order_id, "v1-260528202422-aa-glLdyn");
-  assert.equal(capture.order_status, "PROCESSED");
-  assert.equal(capture.payment_id, "v1-260528202422-aa-glLdyn-up-a");
-  assert.equal(capture.payment_status, "PROCESSED");
-  assert.deepEqual(capture.amount, new Amount(300, "INR"));
-  assert.equal(capture.merchant_order_reference, "4d3b8b95-2a1c-4e6c-b15f-135b5fe00c70");
-  assert.equal(capture.receipt.reference, "4d3b8b95-2a1c-4e6c-b15f-135b5fe00c70");
-  assert.equal(capture.receipt.external_payment_id, "v1-260528202422-aa-glLdyn-up-a");
+  assert.equal(capture.type, "RESERVE_PAY");
+  assert.equal(capture.payment_method_reference_id, "v1-sub-260527235716-aa-TmOgVb");
+  assert.equal(capture.customer.customer_id, "cust-v1-260527235715-aa-IawrBS");
+  assert.equal(capture.customer.merchant_customer_reference, "abcd0008");
+  assert.equal(capture.merchant_payment_debit_reference, "4d3b8b95-2a1c-4e6c-b15f-135b5fe00c70");
+  assert.deepEqual(capture.amount, { value: 300, currency: "INR" });
+  assert.equal(capture.status, "PROCESSED");
+  assert.equal(capture.payment_data.order_id, "v1-260528202422-aa-glLdyn");
+  assert.equal(capture.payment_data.sbmd_data.upstream_payment_id, "v1-260528202422-aa-glLdyn-up-a");
+  assert.equal(capture.payment_gateway, PaymentGateway.PineLabsOnline);
+  assert.equal(capture.payment_method, undefined);
   assert.deepEqual(
     calls.map((call) => call.path),
     ["/api/auth/v1/token", "/mpp/v1/debit"],
   );
+});
+
+test("server SDK retries pending debit with the same idempotency key and honors Retry-After fallback", async () => {
+  const calls = [];
+  const delays = [];
+  const originalSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (callback, delay = 0, ...args) => {
+    delays.push(delay);
+    callback(...args);
+    return 0;
+  };
+
+  try {
+    const fetchImpl = async (input, init = {}) => {
+      const parsed = new URL(String(input));
+      calls.push({ path: parsed.pathname, init });
+
+      if (parsed.pathname === "/api/auth/v1/token") {
+        return response(200, { data: { access_token: "server-access-token", expires_in: 3600 } });
+      }
+
+      if (parsed.pathname === "/mpp/v1/debit") {
+        const debitAttempt = calls.filter((call) => call.path === "/mpp/v1/debit").length;
+        assert.equal(init.headers["Idempotency-Key"], "idem-retry-123");
+
+        if (debitAttempt === 1) {
+          return response(202, {
+            merchant_payment_debit_reference: "debit-ref-123",
+            amount: { value: 300, currency: "INR" },
+            status: "PROCESSING",
+          });
+        }
+
+        if (debitAttempt === 2) {
+          return response(202, {
+            merchant_payment_debit_reference: "debit-ref-123",
+            amount: { value: 300, currency: "INR" },
+            status: "PROCESSING",
+          }, { "Retry-After": "3" });
+        }
+
+        return response(200, {
+          merchant_payment_debit_reference: "debit-ref-123",
+          amount: { value: 300, currency: "INR" },
+          status: "PROCESSED",
+          payment_data: {
+            order_id: "ord_123",
+            order_status: "PROCESSED",
+          },
+        });
+      }
+
+      return response(404, { error: "not found" });
+    };
+
+    const p3p = PineLabsOnlineP3P.create({
+      ...config(fetchImpl),
+      maxRetries: 2,
+      initialRetryDelayMs: 11,
+    });
+    const capture = await p3p.capture({
+      token: "P3P_TOK_123",
+      amount: new Amount(300, "INR"),
+      paymentMethod: PaymentMethod.UPI_RESERVE_PAY,
+      customerReference: "abcd0008",
+      mobileNumber: "9039498008",
+      challengeId: "cid",
+      idempotencyKey: "idem-retry-123",
+    });
+
+    assert.equal(capture.status, "PROCESSED");
+    assert.equal(capture.merchant_payment_debit_reference, "debit-ref-123");
+    assert.deepEqual(delays, [11, 3000]);
+    assert.deepEqual(
+      calls.map((call) => call.path),
+      ["/api/auth/v1/token", "/mpp/v1/debit", "/mpp/v1/debit", "/mpp/v1/debit"],
+    );
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+  }
+});
+
+test("server SDK returns a pending capture result after pending debit retries are exhausted", async () => {
+  const calls = [];
+  const originalSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (callback, _delay = 0, ...args) => {
+    callback(...args);
+    return 0;
+  };
+
+  try {
+    const fetchImpl = async (input, init = {}) => {
+      const parsed = new URL(String(input));
+      calls.push({ path: parsed.pathname, init });
+
+      if (parsed.pathname === "/api/auth/v1/token") {
+        return response(200, { data: { access_token: "server-access-token", expires_in: 3600 } });
+      }
+
+      if (parsed.pathname === "/mpp/v1/debit") {
+        return response(202, {
+          merchant_payment_debit_reference: "debit-ref-pending",
+          amount: { value: 300, currency: "INR" },
+          status: "PROCESSING",
+        });
+      }
+
+      return response(404, { error: "not found" });
+    };
+
+    const p3p = PineLabsOnlineP3P.create({
+      ...config(fetchImpl),
+      maxRetries: 1,
+      initialRetryDelayMs: 7,
+    });
+    const capture = await p3p.capture({
+      token: "P3P_TOK_123",
+      amount: new Amount(300, "INR"),
+      paymentMethod: PaymentMethod.UPI_RESERVE_PAY,
+      customerReference: "abcd0008",
+      mobileNumber: "9039498008",
+      challengeId: "cid",
+      idempotencyKey: "idem-pending-123",
+    });
+
+    assert.equal(capture.status, "PROCESSING");
+    assert.equal(capture.idempotencyKey, "idem-pending-123");
+    assert.match(capture.message, /pending|processing/i);
+    assert.deepEqual(
+      calls.map((call) => call.path),
+      ["/api/auth/v1/token", "/mpp/v1/debit", "/mpp/v1/debit"],
+    );
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+  }
+});
+
+test("server SDK uses default pending retry budget and delay when config overrides are absent", async () => {
+  const calls = [];
+  const delays = [];
+  const originalSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (callback, delay = 0, ...args) => {
+    delays.push(delay);
+    callback(...args);
+    return 0;
+  };
+
+  try {
+    const fetchImpl = async (input, init = {}) => {
+      const parsed = new URL(String(input));
+      calls.push({ path: parsed.pathname, init });
+
+      if (parsed.pathname === "/api/auth/v1/token") {
+        return response(200, { data: { access_token: "server-access-token", expires_in: 3600 } });
+      }
+
+      if (parsed.pathname === "/mpp/v1/debit") {
+        return response(202, {
+          merchant_payment_debit_reference: "debit-ref-defaults",
+          amount: { value: 300, currency: "INR" },
+          status: "PROCESSING",
+        });
+      }
+
+      return response(404, { error: "not found" });
+    };
+
+    const p3p = PineLabsOnlineP3P.create(config(fetchImpl));
+    const capture = await p3p.capture({
+      token: "P3P_TOK_123",
+      amount: new Amount(300, "INR"),
+      paymentMethod: PaymentMethod.UPI_RESERVE_PAY,
+      customerReference: "abcd0008",
+      mobileNumber: "9039498008",
+      challengeId: "cid",
+      idempotencyKey: "idem-defaults-123",
+    });
+
+    assert.equal(capture.status, "PROCESSING");
+    assert.equal(calls.filter((call) => call.path === "/mpp/v1/debit").length, 3);
+    assert.deepEqual(delays, [300, 300]);
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+  }
+});
+
+test("server SDK exposes getDebitStatus by idempotency key", async () => {
+  const calls = [];
+  const fetchImpl = async (input, init = {}) => {
+    const parsed = new URL(String(input));
+    calls.push({ path: parsed.pathname, init });
+
+    if (parsed.pathname === "/api/auth/v1/token") {
+      return response(200, { data: { access_token: "server-access-token", expires_in: 3600 } });
+    }
+
+    if (parsed.pathname === "/mpp/v1/debit/idem-status-123") {
+      assert.equal(init.method, "GET");
+      assert.equal(init.headers.Authorization, "Bearer server-access-token");
+      return response(200, {
+        payment_method: "RESERVE_PAY",
+        merchant_payment_debit_reference: "idem-status-123",
+        amount: { value: 300, currency: "INR" },
+        status: "PROCESSED",
+        payment_data: {
+          order_id: "ord_status_123",
+          order_status: "PROCESSED",
+        },
+      });
+    }
+
+    return response(404, { error: "not found" });
+  };
+
+  const p3p = PineLabsOnlineP3P.create(config(fetchImpl));
+  const debitStatus = await p3p.getDebitStatus("idem-status-123");
+
+  assert.equal(debitStatus.merchant_payment_debit_reference, "idem-status-123");
+  assert.equal(debitStatus.status, "PROCESSED");
+  assert.equal(debitStatus.payment_data.order_id, "ord_status_123");
+  assert.deepEqual(
+    calls.map((call) => call.path),
+    ["/api/auth/v1/token", "/mpp/v1/debit/idem-status-123"],
+  );
+});
+
+test("decidePayment returns 202 pending when debit remains in progress after retries", async () => {
+  const originalSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (callback, _delay = 0, ...args) => {
+    callback(...args);
+    return 0;
+  };
+
+  try {
+    const fetchImpl = async (input, init = {}) => {
+      const parsed = new URL(String(input));
+
+      if (parsed.pathname === "/api/auth/v1/token") {
+        return response(200, { data: { access_token: "server-access-token", expires_in: 3600 } });
+      }
+
+      if (parsed.pathname === "/mpp/v1/debit") {
+        return response(202, {
+          merchant_payment_debit_reference: init.headers["Idempotency-Key"],
+          amount: { value: 100, currency: "INR" },
+          status: "PROCESSING",
+        });
+      }
+
+      return response(404, { error: "not found" });
+    };
+
+    const serverConfig = {
+      ...config(fetchImpl),
+      maxRetries: 1,
+      initialRetryDelayMs: 5,
+    };
+    const p3p = PineLabsOnlineP3P.create(serverConfig);
+    const generated = await p3p.generateChallenge(
+      new ChargeOptions(new Amount(100, "INR"), "/rides/confirm"),
+    );
+    const credentialHeader = `Payment ${Buffer.from(
+      JSON.stringify({
+        challenge: generated.challenge,
+        source: "client-client",
+        payload: {
+          type: "token",
+          token: "P3P_TOK_123",
+          customer_reference: "cust-ref-123",
+          mobile_number: "9876543210",
+          payment_method: PaymentMethod.UPI_RESERVE_PAY,
+        },
+      }),
+    ).toString("base64url")}`;
+
+    const decision = await decidePayment({
+      credentialHeader,
+      config: serverConfig,
+      chargeOptions: new ChargeOptions(new Amount(100, "INR"), "/rides/confirm"),
+    });
+
+    assert.equal(decision.action, "pending");
+    assert.equal(decision.status, 202);
+    assert.equal(decision.captureResult.status, "PROCESSING");
+    assert.ok(decision.captureResult.idempotencyKey);
+    assert.deepEqual(decision.problemDetails, {
+      status: "PENDING",
+      idempotencyKey: decision.captureResult.idempotencyKey,
+      message: "Debit is still processing.",
+      debitStatus: "PROCESSING",
+      retryAfter: 5,
+    });
+    assert.equal(decision.headers["Payment-Receipt"], undefined);
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+  }
+});
+
+test("buildReceiptHeader falls back to raw debit fields from the latest swagger shape", () => {
+  const before = Date.now();
+  const header = buildReceiptHeader({
+    amount: { value: 300, currency: "INR" },
+    merchant_payment_debit_reference: "debit-ref-123",
+    payment_data: {
+      order_id: "ord_raw_123",
+      order_status: "PROCESSED",
+    },
+    status: "PROCESSED",
+    settled_at: "",
+    created_at: "2030-01-02T00:00:00Z",
+    payment_gateway: PaymentGateway.PineLabsOnline,
+    payment_method: PaymentMethod.UPI_RESERVE_PAY,
+  }, "ch_raw_123");
+  const after = Date.now();
+
+  const decodedReceipt = JSON.parse(
+    Buffer.from(header.slice("Payment ".length), "base64url").toString("utf8"),
+  );
+  assert.equal(decodedReceipt.reference, "debit-ref-123");
+  assert.equal(decodedReceipt.orderId, null);
+  assert.equal(decodedReceipt.merchantOrderReference, "debit-ref-123");
+  assert.equal(typeof decodedReceipt.timestamp, "string");
+  const timestamp = Date.parse(decodedReceipt.timestamp);
+  assert.equal(Number.isFinite(timestamp), true);
+  assert.equal(timestamp >= before && timestamp <= after + 1000, true);
+  assert.deepEqual(decodedReceipt.settlement, { amount: "3.00", currency: "INR" });
 });
 
 test("decidePayment returns upstream capture code and message for 5xx debit failures", async () => {

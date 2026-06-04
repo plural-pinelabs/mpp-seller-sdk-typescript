@@ -15,12 +15,13 @@ test("server package exposes modular entry points", async () => {
   assert.equal(typeof utils.buildReceiptHeader, "function");
   assert.equal(config.P3PEnvironment.PRODUCTION, "https://api.pluralpay.in");
   assert.equal(config.P3PEnvironmentDefaults[config.P3PEnvironment.SANDBOX].maxRetries, 2);
-  assert.equal(config.P3PEnvironmentDefaults[config.P3PEnvironment.PRODUCTION].requestTimeoutMs, 10_000);
+  assert.equal(config.P3PEnvironmentDefaults[config.P3PEnvironment.SANDBOX].requestTimeoutMs, 60_000);
+  assert.equal(config.P3PEnvironmentDefaults[config.P3PEnvironment.PRODUCTION].requestTimeoutMs, 45_000);
   assert.equal(root.P3PEnvironment, config.P3PEnvironment);
   assert.equal(config.MppEnvironment, undefined);
   assert.equal(types.PAYMENT_HEADER_PREFIX, "Payment ");
   assert.equal(types.PAYMENT_CREDENTIAL_HEADER, "P3P-Credential");
   assert.equal(root.PaymentGateway.PineLabsOnline, "PINE LABS ONLINE");
-  assert.equal(root.PaymentMethod.UPI_RESERVE_PAY, "SBMD");
+  assert.equal(root.PaymentMethod.UPI_RESERVE_PAY, "RESERVE_PAY");
   assert.equal(root.PaymentMethod.Crypto, "CRYPTO");
 });

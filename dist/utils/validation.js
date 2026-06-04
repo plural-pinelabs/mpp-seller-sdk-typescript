@@ -9,24 +9,20 @@ const types_1 = require("../types");
 function validateConfig(config) {
     const hasClientCredentials = Boolean(config.clientId && config.clientSecret);
     if (!hasClientCredentials) {
-        throw new Error("PluralSellerConfig: clientId and clientSecret are required");
-    }
-    // Derive challengeSecretKey from clientSecret if not explicitly provided
-    if (!config.challengeSecretKey) {
-        config.challengeSecretKey = config.clientSecret;
+        throw new Error("PineLabsOnlineServerConfig: clientId and clientSecret are required");
     }
     if (!(0, config_1.isP3PEnvironment)(config.env)) {
-        throw new Error("PluralSellerConfig: env must be P3PEnvironment.SANDBOX or P3PEnvironment.PRODUCTION");
+        throw new Error("PineLabsOnlineServerConfig: env must be P3PEnvironment.SANDBOX or P3PEnvironment.PRODUCTION");
     }
     if (config.paymentGateway !== types_1.PaymentGateway.PineLabsOnline) {
-        throw new Error("PluralSellerConfig: paymentGateway must be PaymentGateway.PineLabsOnline");
+        throw new Error("PineLabsOnlineServerConfig: paymentGateway must be PaymentGateway.PineLabsOnline");
     }
     if (!Array.isArray(config.availablePaymentMethods) || config.availablePaymentMethods.length === 0) {
-        throw new Error("PluralSellerConfig: availablePaymentMethods must contain at least one payment method");
+        throw new Error("PineLabsOnlineServerConfig: availablePaymentMethods must contain at least one payment method");
     }
     for (const paymentMethod of config.availablePaymentMethods) {
         if (!isSupportedPaymentMethod(paymentMethod)) {
-            throw new Error(`PluralSellerConfig: unsupported payment method "${paymentMethod}"`);
+            throw new Error(`PineLabsOnlineServerConfig: unsupported payment method "${paymentMethod}"`);
         }
     }
 }
@@ -48,7 +44,7 @@ function validateCreateMandateOptions(options) {
     }
 }
 function isSupportedPaymentMethod(value) {
-    return value === types_1.PaymentMethod.UpiSbmd || value === types_1.PaymentMethod.Crypto;
+    return value === types_1.PaymentMethod.RESERVE_PAY || value === types_1.PaymentMethod.Crypto;
 }
 function normalizeMobileNumber(value) {
     const digits = String(value ?? "").replace(/\D/g, "");

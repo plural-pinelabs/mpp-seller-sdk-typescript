@@ -1,10 +1,10 @@
-import { CreateMandateOptions, Mandate, PluralSellerConfig } from "../types";
+import { CreateMandateOptions, Mandate, PineLabsOnlineServerConfig } from "../types";
 export declare class ApiClient {
     private config;
     private readonly baseUrl;
     private readonly fetchImpl;
     private readonly auth;
-    constructor(config: PluralSellerConfig);
+    constructor(config: PineLabsOnlineServerConfig);
     /** Create an P3P mandate/pre-authorization and normalize the service response. */
     createMandate(options: CreateMandateOptions): Promise<Mandate>;
     /** Fetch mandate/pre-authorization status through `GET /mpp/v1/authorization/{id}`. */
