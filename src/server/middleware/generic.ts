@@ -1,5 +1,7 @@
 import {
   ChargeOptions,
+  GRANTEX_TOKEN_HEADER,
+  GrantexVerificationResult,
   P3PCaptureError,
   PaymentDecision,
   PAYMENT_HEADER_PREFIX,
@@ -7,22 +9,40 @@ import {
   ProblemDetails,
   ChallengeResult,
 } from "../../types";
+import { createHostedGrantexClient, GrantTokenVerifier, HostedGrantexError } from "../../grantex";
 import { buildReceiptHeader } from "../../utils/receipt-builder";
 import { CaptureClient } from "../capture-client";
 import { isPendingDebitStatus } from "../capture-client";
 import { ChallengeGenerator } from "../challenge-generator";
 import { CredentialVerifier } from "../credential-verifier";
 
+const MAX_TRANSACTION_SCOPE_PREFIX = "mpp:payment:max_txn_paise:";
+
 /** Decide how a server route should respond to an incoming paid-resource request. */
 export async function decidePayment(options: {
   credentialHeader?: string;
+  grantexTokenHeader?: string;
   config: PineLabsOnlineServerConfig;
   chargeOptions: ChargeOptions;
 }): Promise<PaymentDecision> {
   const challengeGenerator = new ChallengeGenerator(options.config);
   const credentialVerifier = new CredentialVerifier(options.config);
 
+  const grantResult = await verifyGrantIfPresent(options.config, options.grantexTokenHeader);
+  const grantDecision = decideGrant(options.config, options.grantexTokenHeader, grantResult);
+  if (grantDecision) {
+    return grantDecision;
+  }
+  const transactionCapDecision = decideTransactionCap(options.config, options.chargeOptions, grantResult);
+  if (transactionCapDecision) {
+    return transactionCapDecision;
+  }
+
   if (!options.credentialHeader?.startsWith(PAYMENT_HEADER_PREFIX)) {
+    const budgetDecision = await checkHostedBudgetBeforeChallenge(options.config, options.chargeOptions, grantResult);
+    if (budgetDecision) {
+      return budgetDecision;
+    }
     const result = await challengeGenerator.generate(options.chargeOptions);
     return challengeDecision("challenge", result, result.problemDetails);
   }
@@ -48,7 +68,7 @@ export async function decidePayment(options: {
       merchantOrderReference: options.chargeOptions.merchantOrderReference,
       metadata: options.chargeOptions.metadata,
       paymentMethod: verification.credential.payload.payment_method,
-      customerReference: verification.credential.payload.customer_reference,
+      paymentMethodReferenceId: verification.credential.payload.payment_method_reference_id,
       mobileNumber: verification.credential.payload.mobile_number,
       challengeId: verification.credential.challenge.id,
     });
@@ -71,8 +91,10 @@ export async function decidePayment(options: {
         captureResult,
         credential: verification.credential,
         problemDetails,
+        grantResult,
       };
     }
+    await debitHostedBudgetAfterCapture(options.config, options.chargeOptions, grantResult);
     const receiptHeader = buildReceiptHeader(captureResult, verification.credential.challenge.id, {
       paymentGateway: options.config.paymentGateway,
     });
@@ -83,12 +105,13 @@ export async function decidePayment(options: {
       captureResult,
       credential: verification.credential,
       receiptHeader,
+      grantResult,
     };
   } catch (error) {
-    if (error instanceof P3PCaptureError && error.captureError?.httpStatus && error.captureError.httpStatus >= 500) {
+    if (error instanceof P3PCaptureError && error.captureError?.httpStatus) {
       return {
-        action: "error",
-        status: 502,
+        action: error.captureError.httpStatus >= 500 ? "error" : "failed",
+        status: error.captureError.httpStatus >= 500 ? 502 : error.captureError.httpStatus,
         headers: { "content-type": "application/json" },
         problemDetails: {
           code: error.captureError.code,
@@ -96,15 +119,208 @@ export async function decidePayment(options: {
         },
       };
     }
-    const result = await challengeGenerator.generate(options.chargeOptions);
-    return challengeDecision("failed", result, {
-      type: result.problemDetails.type.replace("payment-required", "payment-failed"),
-      title: "Payment Failed",
-      status: 402,
-      detail: "Previous payment token was invalid or expired. New challenge issued.",
-      challengeId: result.challenge.id,
+    return {
+      action: "error",
+      status: 502,
+      headers: { "content-type": "application/json" },
+      problemDetails: {
+        code: "CAPTURE_FAILED",
+        message: error instanceof P3PCaptureError ? error.message : "Capture failed",
+      },
+    };
+  }
+}
+
+function decideGrant(
+  config: PineLabsOnlineServerConfig,
+  grantTokenHeader: string | undefined,
+  result: GrantexVerificationResult | undefined,
+): PaymentDecision | undefined {
+  if (!config.grantex) {
+    return undefined;
+  }
+
+  const token = grantTokenHeader?.trim();
+  if (!token) {
+    if (config.grantex.enforceGrant) {
+      const result: GrantexVerificationResult = { valid: false, error: "Missing grant token" };
+      return grantDecision("grant_required", {
+        type: "urn:ietf:rfc:9725:error:grant-required",
+        title: "Grant Token Required",
+        status: 403,
+        detail: `A valid Grantex grant token is required in the ${GRANTEX_TOKEN_HEADER} header.`,
+      }, result);
+    }
+    return undefined;
+  }
+
+  if (result?.valid) {
+    return undefined;
+  }
+
+  config.logger?.error("Grantex grant verification failed", { error: result?.error });
+  if (config.grantex.enforceGrant) {
+    return grantDecision("grant_invalid", {
+      type: "urn:ietf:rfc:9725:error:grant-invalid",
+      title: "Invalid Grant Token",
+      status: 403,
+      detail: "The grant token could not be verified.",
+    }, result ?? { valid: false, error: "The grant token could not be verified." });
+  }
+  return undefined;
+}
+
+function decideTransactionCap(
+  config: PineLabsOnlineServerConfig,
+  chargeOptions: ChargeOptions,
+  result: GrantexVerificationResult | undefined,
+): PaymentDecision | undefined {
+  if (!config.grantex?.enforceGrant || !result?.valid || !result.grant) {
+    return undefined;
+  }
+  const maxTransactionPaise = extractMaxTransactionPaise(result.grant.scopes);
+  if (maxTransactionPaise === undefined || chargeOptions.amount.value <= maxTransactionPaise) {
+    return undefined;
+  }
+  return grantDecision("grant_invalid", {
+    type: "urn:ietf:rfc:9725:error:transaction-limit-exceeded",
+    title: "Transaction Limit Exceeded",
+    status: 403,
+    detail: `The charge amount ${chargeOptions.amount.value} exceeds the Grantex per-transaction cap ${maxTransactionPaise}.`,
+  }, {
+    valid: false,
+    grant: result.grant,
+    error: "Grantex per-transaction cap exceeded",
+  });
+}
+
+async function checkHostedBudgetBeforeChallenge(
+  config: PineLabsOnlineServerConfig,
+  chargeOptions: ChargeOptions,
+  result: GrantexVerificationResult | undefined,
+): Promise<PaymentDecision | undefined> {
+  if (!config.grantex?.enforceGrant || config.grantex.debitBudgetBeforeChallenge === false || !config.grantex.hosted) {
+    return undefined;
+  }
+  if (!result?.valid || !result.grant) {
+    return undefined;
+  }
+  try {
+    const balance = await createHostedGrantexClient(config.grantex.hosted).getBudgetBalance(result.grant.grantId);
+    const remainingPaise = grantexMajorToPaise(balance.remainingBudget);
+    if (remainingPaise < chargeOptions.amount.value) {
+      return grantDecision("grant_invalid", {
+        type: "urn:ietf:rfc:9725:error:budget-exceeded",
+        title: "Grant Budget Exceeded",
+        status: 403,
+        detail: `The Grantex grant budget has ${remainingPaise} paise remaining, which is less than the charge amount ${chargeOptions.amount.value} paise.`,
+      }, {
+        valid: false,
+        grant: result.grant,
+        error: "Grantex grant budget exceeded",
+      });
+    }
+    return undefined;
+  } catch (error) {
+    const hostedError = error instanceof HostedGrantexError
+      ? error
+      : new HostedGrantexError(error instanceof Error ? error.message : String(error));
+    config.logger?.error("Grantex budget check failed", {
+      error: hostedError.message,
+      status: hostedError.status,
+      code: hostedError.code,
+    });
+    return grantDecision("grant_invalid", {
+      type: "urn:ietf:rfc:9725:error:budget-exceeded",
+      title: "Grant Budget Exceeded",
+      status: 403,
+      detail: "The Grantex grant budget could not be checked.",
+    }, {
+      valid: false,
+      grant: result.grant,
+      error: hostedError.message || "The Grantex grant budget could not be checked.",
     });
   }
+}
+
+async function debitHostedBudgetAfterCapture(
+  config: PineLabsOnlineServerConfig,
+  chargeOptions: ChargeOptions,
+  result: GrantexVerificationResult | undefined,
+): Promise<void> {
+  if (!config.grantex?.enforceGrant || config.grantex.debitBudgetBeforeChallenge === false || !config.grantex.hosted) {
+    return;
+  }
+  if (!result?.valid || !result.grant) {
+    return;
+  }
+  try {
+    await createHostedGrantexClient(config.grantex.hosted).debitBudget({
+      grantId: result.grant.grantId,
+      amount: paiseToGrantexMajor(chargeOptions.amount.value),
+      description: chargeOptions.description ?? "P3P payment capture",
+      metadata: {
+        resource: chargeOptions.resource,
+        currency: chargeOptions.amount.currency,
+        ...(chargeOptions.metadata ?? {}),
+      },
+    });
+  } catch (error) {
+    const hostedError = error instanceof HostedGrantexError
+      ? error
+      : new HostedGrantexError(error instanceof Error ? error.message : String(error));
+    config.logger?.error("Grantex budget debit failed after successful capture", {
+      error: hostedError.message,
+      status: hostedError.status,
+      code: hostedError.code,
+    });
+  }
+}
+
+function paiseToGrantexMajor(amountPaise: number): number {
+  return amountPaise / 100;
+}
+
+function grantexMajorToPaise(amount: number): number {
+  return Math.round(amount * 100);
+}
+
+async function verifyGrantIfPresent(config: PineLabsOnlineServerConfig, grantTokenHeader?: string): Promise<GrantexVerificationResult | undefined> {
+  if (!config.grantex || !grantTokenHeader?.trim()) {
+    return undefined;
+  }
+  return new GrantTokenVerifier(config.grantex).verify(grantTokenHeader);
+}
+
+function grantDecision(
+  action: Extract<PaymentDecision["action"], "grant_required" | "grant_invalid">,
+  problemDetails: ProblemDetails,
+  grantResult: GrantexVerificationResult,
+): PaymentDecision {
+  return {
+    action,
+    status: 403,
+    headers: {
+      "Content-Type": "application/problem+json",
+      "Cache-Control": "no-store",
+    },
+    problemDetails,
+    grantResult,
+  };
+}
+
+function extractMaxTransactionPaise(scopes: readonly string[]): number | undefined {
+  let maxTransactionPaise: number | undefined;
+  for (const scope of scopes) {
+    if (!scope.startsWith(MAX_TRANSACTION_SCOPE_PREFIX)) {
+      continue;
+    }
+    const value = Number(scope.slice(MAX_TRANSACTION_SCOPE_PREFIX.length));
+    if (Number.isInteger(value) && value >= 0) {
+      maxTransactionPaise = maxTransactionPaise === undefined ? value : Math.min(maxTransactionPaise, value);
+    }
+  }
+  return maxTransactionPaise;
 }
 
 function challengeDecision(

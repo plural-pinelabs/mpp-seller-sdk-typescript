@@ -29,7 +29,7 @@ const p3p = PineLabsOnlineP3P.create({
   clientId: "server-client-id",
   clientSecret: "server-client-secret",
   paymentGateway: PaymentGateway.PineLabsOnline,
-  availablePaymentMethods: [PaymentMethod.UPI_RESERVE_PAY, PaymentMethod.Crypto],
+  availablePaymentMethods: [PaymentMethod.RESERVE_PAY, PaymentMethod.OTM, PaymentMethod.CARD, PaymentMethod.CREDIT_EMI],
   realm: P3PEnvironment.SANDBOX,
   env: P3PEnvironment.SANDBOX,
 });
@@ -50,7 +50,7 @@ const config = {
   clientId: "...",
   clientSecret: "...",
   paymentGateway: PaymentGateway.PineLabsOnline,
-  availablePaymentMethods: [PaymentMethod.UPI_RESERVE_PAY, PaymentMethod.Crypto],
+  availablePaymentMethods: [PaymentMethod.RESERVE_PAY, PaymentMethod.OTM, PaymentMethod.CARD, PaymentMethod.CREDIT_EMI],
   env: P3PEnvironment.SANDBOX,
 };
 ```
@@ -71,7 +71,24 @@ Environment defaults:
 
 The generated challenge includes:
 
-- `request.availablePaymentMethods: ["RESERVE_PAY", "CRYPTO"]`
+- `request.availablePaymentMethods: ["RESERVE_PAY", "OTM", "CARD", "CREDIT_EMI"]`
+
+For offer-led Credit EMI, pass `PaymentMethod.CREDIT_EMI` to
+`createPreAuthorization`. The SDK preserves it as
+`payment_method: "CREDIT_EMI"` and serializes structured merchant metadata:
+
+```ts
+await p3p.createPreAuthorization({
+  paymentMethod: PaymentMethod.CREDIT_EMI,
+  mobileNumber,
+  amount: new Amount(orderAmountPaise, "INR"),
+  validityInDays: 7,
+  merchantMetadata: {
+    offer_data: selectedOfferData,
+    p3p_offer_required: "true",
+  },
+});
+```
 
 During verification, the server SDK rejects client credentials whose
 `payload.payment_method` is not advertised by the signed challenge and server
@@ -115,15 +132,21 @@ return response;
    `Payment-Receipt`.
 
 If `/mpp/v1/debit` returns `202 Accepted`, the SDK treats that as an
-accepted-but-processing debit:
+accepted-but-processing debit. It does **not** re-POST `/mpp/v1/debit` — Pine
+Labs rejects a resubmit with the same `Idempotency-Key` (`422`). Instead the
+SDK resolves the terminal status by polling the read-only endpoint
+`GET /mpp/v1/debit/{id}`:
 
-- retries the same debit with the same `Idempotency-Key`
-- respects `Retry-After` when Pine Labs returns it
+- polls up to `maxRetries` times until the debit reaches a terminal status
+- respects `Retry-After` from the `202` response when Pine Labs returns it
 - falls back to `initialRetryDelayMs` otherwise
-- counts those pending retries against `maxRetries`
+- genuine transient failures on the initial POST (network errors, `HTTP 429`,
+  and `5xx`) are still retried by the SDK's request layer
 
-If pending debit retries are exhausted and the debit is still non-terminal, the
-middleware returns `202` and the protected resource must stay withheld.
+If the poll budget is exhausted and the debit is still non-terminal, the
+middleware returns `202` with `idempotencyKey` on the result and the protected
+resource must stay withheld. Application code can later call
+`p3p.getDebitStatus(idempotencyKey)` to reconcile.
 
 The debit request body uses the current P3P contract:
 
@@ -147,9 +170,65 @@ const mandate = await p3p.createMandate({
   customerReference: "customer-ref-123",
   amount: new Amount(50000, "INR"),
   validityInDays: 20,
-  paymentMethod: PaymentMethod.UPI_RESERVE_PAY,
+  paymentMethod: PaymentMethod.RESERVE_PAY,
 });
 ```
+
+Card pre-authorization uses the same endpoint and returns the service contract
+shape directly:
+
+```ts
+const preAuthorization = await p3p.createPreAuthorization({
+  paymentMethod: PaymentMethod.CARD,
+  mobileNumber: "9876543210",
+  amount: new Amount(1000, "INR"),
+  validityInDays: 7,
+  description: "Card pre-auth for order-123",
+});
+
+console.log(preAuthorization.payment_method_reference_id);
+// `challenge_url` / `redirect_url` points at the hosted checkout where the
+// customer completes 3DS / card authorization. Open it in an iframe or
+// redirect the customer to it, then wait for the mandate to become ACTIVE
+// before capturing.
+console.log(preAuthorization.redirect_url ?? preAuthorization.challenge_url);
+```
+
+### End-to-End Card Payment
+
+The full CARD flow uses `payment_method_reference_id` returned by
+`createPreAuthorization` to link the eventual debit back to the customer's
+authorized card:
+
+```ts
+// 1. Create a card pre-authorization (customer completes the hosted checkout).
+const preAuth = await p3p.createPreAuthorization({
+  paymentMethod: PaymentMethod.CARD,
+  mobileNumber: "9876543210",
+  amount: new Amount(50000, "INR"),
+  validityInDays: 7,
+});
+
+// 2. Direct the customer to the checkout URL (iframe or redirect).
+//    On success the pre-authorization transitions to ACTIVE.
+const checkoutUrl = preAuth.redirect_url ?? preAuth.challenge_url;
+
+// 3. Poll the mandate until it becomes ACTIVE.
+let mandate = await p3p.getMandate(preAuth.payment_method_reference_id);
+while (mandate.payment_status !== "ACTIVE") {
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+  mandate = await p3p.getMandate(preAuth.payment_method_reference_id);
+}
+
+// 4. Charge the card via the standard 402 flow. The Server SDK issues a
+//    Payment challenge and, once the Client SDK returns a Payment credential
+//    that carries a token bound to this pre-auth, calls POST /mpp/v1/debit
+//    with `payment_method_reference_id: preAuth.payment_method_reference_id`.
+```
+
+On the client side, the Client SDK creates the payment token with
+`paymentMethod: PaymentMethod.CARD` — see the Client SDK README for the
+matching runtime context.
 
 The server SDK intentionally does not expose token creation. The client/customer
 flow obtains a one-shot token and sends it back in the `P3P-Credential: Payment`

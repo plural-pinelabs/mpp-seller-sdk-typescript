@@ -21,6 +21,9 @@ export class ChallengeGenerator {
 
   /** Generate a challenge and problem-details response for HTTP 402. */
   async generate(options: ChargeOptions): Promise<ChallengeResult> {
+    if (!Number.isInteger(options.amount.value) || options.amount.value <= 0) {
+      throw new Error("ChargeOptions: amount.value must be a positive integer (paise)");
+    }
     const expires = new Date(Date.now() + (options.challengeExpirySeconds ?? this.defaultExpirySeconds) * 1000).toISOString();
     const amountMajor = (options.amount.value / 100).toFixed(2);
     const request: ChallengeRequest = {

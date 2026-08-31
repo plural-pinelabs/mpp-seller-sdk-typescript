@@ -3,14 +3,35 @@ import {
   CaptureResult,
   ChallengeResult,
   ChargeOptions,
+  CreateMandateRevokeOptions,
   CreateMandateOptions,
+  CreatePreAuthorizationOptions,
+  CreateRefundOptions,
+  GrantexAuthorizationOptions,
+  GrantexAuthorizationResult,
+  GrantexBudgetAllocationOptions,
+  GrantexBudgetAllocationResult,
+  GrantexBudgetBalanceResult,
+  GrantexBudgetDebitOptions,
+  GrantexBudgetDebitResult,
+  GrantexBudgetTransactionsOptions,
+  GrantexBudgetTransactionsResult,
+  GrantexExchangeCodeOptions,
+  GrantexExchangeCodeResult,
   Mandate,
+  MandateBalanceLookupOptions,
+  MandateBalanceResult,
+  MandateRevokeResult,
+  Order,
   PineLabsOnlineServerConfig,
+  PreAuthorization,
   ReceiptContext,
   ReceiptData,
+  Refund,
   VerificationResult,
 } from "../types";
 import { withP3PEnvironmentDefaults } from "../config";
+import { createHostedGrantexClient, HostedGrantexClient } from "../grantex";
 import { buildReceiptData, buildReceiptHeader } from "../utils/receipt-builder";
 import { validateConfig } from "../utils/validation";
 import { ApiClient } from "./api-client";
@@ -24,6 +45,7 @@ export class PineLabsOnlineP3PInstance {
     private credentialVerifier: CredentialVerifier,
     private captureClient: CaptureClient,
     private apiClient: ApiClient,
+    private hostedGrantexClient?: HostedGrantexClient,
   ) {}
 
   /** Generate a signed 402 Payment challenge for a protected resource. */
@@ -51,9 +73,64 @@ export class PineLabsOnlineP3PInstance {
     return this.apiClient.createMandate(options);
   }
 
+  /** Create a card/mandate pre-authorization through `POST /mpp/v1/pre-authorize`. */
+  createPreAuthorization(options: CreatePreAuthorizationOptions): Promise<PreAuthorization> {
+    return this.apiClient.createPreAuthorization(options);
+  }
+
   /** Fetch mandate/pre-authorization status through `GET /mpp/v1/authorization/{id}`. */
   getMandate(mandateId: string): Promise<Mandate> {
     return this.apiClient.getMandate(mandateId);
+  }
+
+  /** Retrieve an order by its Pine Labs order ID. */
+  getOrder(orderId: string): Promise<Order> {
+    return this.apiClient.getOrder(orderId);
+  }
+
+  /** Initiate a refund against a processed Pine Labs order. */
+  createRefund(orderId: string, options: CreateRefundOptions): Promise<Refund> {
+    return this.apiClient.createRefund(orderId, options);
+  }
+
+  /** Fetch mandate balance/authorization status through `GET /mpp/v1/balance`. */
+  getMandateBalance(options: MandateBalanceLookupOptions): Promise<MandateBalanceResult> {
+    return this.apiClient.getMandateBalance(options);
+  }
+
+  /** Create a mandate revoke request through `POST /mpp/v1/revoke`. */
+  revokeMandate(options: CreateMandateRevokeOptions): Promise<MandateRevokeResult> {
+    return this.apiClient.revokeMandate(options);
+  }
+
+  /** Create a hosted Grantex authorization request and return its consent URL. */
+  createGrantexAuthorization(options: GrantexAuthorizationOptions): Promise<GrantexAuthorizationResult> {
+    return this.requireHostedGrantex().createAuthorization(options);
+  }
+
+  /** Exchange a hosted Grantex callback code for a user grant token. */
+  exchangeGrantexCode(options: GrantexExchangeCodeOptions): Promise<GrantexExchangeCodeResult> {
+    return this.requireHostedGrantex().exchangeCode(options);
+  }
+
+  /** Allocate a hosted Grantex grant-level budget. */
+  allocateGrantexBudget(options: GrantexBudgetAllocationOptions): Promise<GrantexBudgetAllocationResult> {
+    return this.requireHostedGrantex().allocateBudget(options);
+  }
+
+  /** Debit a hosted Grantex grant-level budget. */
+  debitGrantexBudget(options: GrantexBudgetDebitOptions): Promise<GrantexBudgetDebitResult> {
+    return this.requireHostedGrantex().debitBudget(options);
+  }
+
+  /** Fetch hosted Grantex grant-level budget balance. */
+  getGrantexBudgetBalance(grantId: string): Promise<GrantexBudgetBalanceResult> {
+    return this.requireHostedGrantex().getBudgetBalance(grantId);
+  }
+
+  /** List hosted Grantex grant-level budget transactions. */
+  listGrantexBudgetTransactions(grantId: string, options?: GrantexBudgetTransactionsOptions): Promise<GrantexBudgetTransactionsResult> {
+    return this.requireHostedGrantex().listBudgetTransactions(grantId, options);
   }
 
   /** Build the `Payment-Receipt` response header for a successful capture. */
@@ -64,6 +141,13 @@ export class PineLabsOnlineP3PInstance {
   /** Build structured receipt data without encoding it as a header. */
   buildReceiptData(captureResult: CaptureResult, challengeId: string, context: ReceiptContext = {}): ReceiptData {
     return buildReceiptData(captureResult, challengeId, context);
+  }
+
+  private requireHostedGrantex(): HostedGrantexClient {
+    if (!this.hostedGrantexClient) {
+      throw new Error("PineLabsOnlineServerConfig: grantex.hosted is required");
+    }
+    return this.hostedGrantexClient;
   }
 }
 
@@ -77,6 +161,7 @@ export class PineLabsOnlineP3P {
       new CredentialVerifier(resolvedConfig),
       new CaptureClient(resolvedConfig),
       new ApiClient(resolvedConfig),
+      resolvedConfig.grantex?.hosted ? createHostedGrantexClient(resolvedConfig.grantex.hosted) : undefined,
     );
   }
 }

@@ -1,4 +1,12 @@
-import { Amount, CaptureResult, Mandate } from "../types";
+import {
+  Amount,
+  CaptureResult,
+  Mandate,
+  MandateBalanceResult,
+  MandateRevokeResult,
+  PaymentMethod,
+  PreAuthorization,
+} from "../types";
 
 export function parseMandate(data: unknown): Mandate {
   const record = asRecord(data) ?? {};
@@ -8,10 +16,10 @@ export function parseMandate(data: unknown): Mandate {
   const customer = asRecord(record.customer);
   const amountValue = amount?.value ?? record.amount_value ?? metadata.amount ?? 0;
   const amountCurrency = amount?.currency ?? record.amount_currency ?? metadata.currency ?? "INR";
-  const challengeUrl = record.challenge_url ?? record.challengeUrl;
+  const challengeUrl = record.challenge_url ?? record.challengeUrl ?? record.redirect_url ?? record.redirectUrl;
   const challenge = asRecord(record.challenge);
   return {
-    mandate_id: String(record.payment_method_reference_id ?? record.authorization_id ?? record.authorizationId ?? record.mandate_id ?? record.mandateId ?? metadata.external_subscription_id ?? ""),
+    mandate_id: String(record.payment_method_reference_id ?? record.authorization_id ?? record.authorizationId ?? record.mandate_id ?? record.mandateId ?? record.order_id ?? record.orderId ?? metadata.external_subscription_id ?? ""),
     object: String(record.object ?? "mandate"),
     order_id: String(record.order_id ?? sbmdData.order_id ?? ""),
     order_status: String(record.order_status ?? record.payment_status ?? record.status ?? ""),
@@ -35,6 +43,31 @@ export function parseMandate(data: unknown): Mandate {
       deep_link: String(challenge?.deep_link ?? challengeUrl ?? ""),
       expires_at: String(challenge?.expires_at ?? record.expiry_at ?? sbmdData.expires_at ?? ""),
     } : undefined,
+    raw: record,
+  };
+}
+
+export function parsePreAuthorization(data: unknown): PreAuthorization {
+  const record = asRecord(data) ?? {};
+  const customer = asRecord(record.customer) ?? {};
+  const amount = asRecord(record.amount) ?? asRecord(record.payment_amount) ?? asRecord(record.paymentAmount);
+  const amountValue = amount?.value ?? record.amount_value ?? 0;
+  const amountCurrency = amount?.currency ?? record.amount_currency ?? "INR";
+  const checkoutUrl = stringOrUndefined(record.redirect_url ?? record.redirectUrl ?? record.challenge_url ?? record.challengeUrl);
+  return {
+    payment_method: normalizePaymentMethod(record.payment_method ?? record.type),
+    payment_method_reference_id: String(record.payment_method_reference_id ?? record.authorization_id ?? record.mandate_id ?? record.order_id ?? record.orderId ?? ""),
+    customer: {
+      customer_id: stringOrUndefined(customer.customer_id),
+      merchant_customer_reference: stringOrUndefined(customer.merchant_customer_reference),
+      mobile_number: String(customer.mobile_number ?? record.mobile_number ?? ""),
+    },
+    challenge_url: checkoutUrl,
+    redirect_url: stringOrUndefined(record.redirect_url ?? record.redirectUrl),
+    status: String(record.status ?? record.payment_status ?? record.order_status ?? ""),
+    amount: new Amount(amountToInt(amountValue), String(amountCurrency)),
+    validity_in_days: typeof record.validity_in_days === "number" ? record.validity_in_days : undefined,
+    expiry_at: stringOrUndefined(record.expiry_at ?? record.expires_at),
     raw: record,
   };
 }
@@ -83,6 +116,52 @@ export function dictToCaptureResult(data: Record<string, unknown>): CaptureResul
   };
 }
 
+export function parseMandateBalanceResult(data: unknown): MandateBalanceResult {
+  const record = asRecord(data) ?? {};
+  const customer = asRecord(record.customer) ?? {};
+  const balanceDetails = asRecord(record.balance_details) ?? {};
+  return {
+    payment_method: normalizePaymentMethod(record.payment_method),
+    payment_method_reference_id: String(record.payment_method_reference_id ?? ""),
+    merchant_id: String(record.merchant_id ?? ""),
+    customer: {
+      mobile_number: String(customer.mobile_number ?? ""),
+      merchant_customer_reference: stringOrUndefined(customer.merchant_customer_reference),
+      bank_account_number: stringOrUndefined(customer.bank_account_number),
+    },
+    status: String(record.status ?? ""),
+    amount: asRecord(record.amount) ? new Amount(amountToInt(asRecord(record.amount)?.value), String(asRecord(record.amount)?.currency ?? "INR")) : undefined,
+    description: stringOrUndefined(record.description),
+    validity_in_days: typeof record.validity_in_days === "number" ? record.validity_in_days : undefined,
+    expiry_at: stringOrUndefined(record.expiry_at),
+    challenge_url: stringOrUndefined(record.challenge_url),
+    external_reference_id: stringOrUndefined(record.external_reference_id),
+    created_at: stringOrUndefined(record.created_at),
+    balance_details: Object.keys(balanceDetails).length > 0 ? {
+      amount_debited: new Amount(
+        amountToInt(asRecord(balanceDetails.amount_debited)?.value),
+        String(asRecord(balanceDetails.amount_debited)?.currency ?? "INR"),
+      ),
+      amount_remaining: new Amount(
+        amountToInt(asRecord(balanceDetails.amount_remaining)?.value),
+        String(asRecord(balanceDetails.amount_remaining)?.currency ?? "INR"),
+      ),
+    } : undefined,
+    raw: record,
+  };
+}
+
+export function parseMandateRevokeResult(data: unknown): MandateRevokeResult {
+  const record = asRecord(data) ?? {};
+  return {
+    payment_method: normalizePaymentMethod(record.payment_method),
+    payment_method_reference_id: String(record.payment_method_reference_id ?? ""),
+    revoke_reference_id: String(record.revoke_reference_id ?? ""),
+    status: String(record.status ?? ""),
+    raw: record,
+  };
+}
+
 export function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -96,4 +175,17 @@ export function stringOrUndefined(value: unknown): string | undefined {
 function amountToInt(value: unknown): number {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? Math.trunc(parsed) : 0;
+}
+
+function normalizePaymentMethod(value: unknown): PaymentMethod {
+  if (value === PaymentMethod.CARD) {
+    return PaymentMethod.CARD;
+  }
+  if (value === PaymentMethod.CREDIT_EMI) {
+    return PaymentMethod.CREDIT_EMI;
+  }
+  if (value === PaymentMethod.OTM) {
+    return PaymentMethod.OTM;
+  }
+  return value === PaymentMethod.Crypto ? PaymentMethod.Crypto : PaymentMethod.RESERVE_PAY;
 }

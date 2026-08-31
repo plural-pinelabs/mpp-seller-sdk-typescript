@@ -1,6 +1,6 @@
 {
   "name": "p3p-server-sdk",
-  "version": "0.1.5",
+  "version": "1.1.0",
   "description": "Pine Labs Online P3P Server SDK - Pine Labs Online P3P server middleware (TypeScript)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -16,7 +16,7 @@
     "server",
     "pinelabs",
     "upi",
-    "sbmd",
+    "reserve-pay",
     "pinelabs-payment-protocol"
   ],
   "engines": {
@@ -41,6 +41,11 @@
       "types": "./dist/server/middleware/index.d.ts",
       "require": "./dist/server/middleware/index.js",
       "default": "./dist/server/middleware/index.js"
+    },
+    "./grantex": {
+      "types": "./dist/grantex/index.d.ts",
+      "require": "./dist/grantex/index.js",
+      "default": "./dist/grantex/index.js"
     },
     "./config": {
       "types": "./dist/config/index.d.ts",
@@ -69,6 +74,9 @@
     "clean": "rm -rf dist",
     "test": "npm run build && node --test tests/*.test.mjs",
     "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@grantex/sdk": "0.3.8"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

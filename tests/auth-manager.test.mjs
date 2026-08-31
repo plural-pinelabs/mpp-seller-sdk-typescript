@@ -28,7 +28,7 @@ function config() {
     realm: "Pine Labs Online P3P",
     env: P3PEnvironment.SANDBOX,
     paymentGateway: PaymentGateway.PineLabsOnline,
-    availablePaymentMethods: [PaymentMethod.UPI_RESERVE_PAY, PaymentMethod.Crypto],
+    availablePaymentMethods: [PaymentMethod.RESERVE_PAY, PaymentMethod.OTM],
     maxRetries: 0,
   };
 }

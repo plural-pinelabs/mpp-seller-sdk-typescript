@@ -22,6 +22,10 @@ test("server package exposes modular entry points", async () => {
   assert.equal(types.PAYMENT_HEADER_PREFIX, "Payment ");
   assert.equal(types.PAYMENT_CREDENTIAL_HEADER, "P3P-Credential");
   assert.equal(root.PaymentGateway.PineLabsOnline, "PINE LABS ONLINE");
-  assert.equal(root.PaymentMethod.UPI_RESERVE_PAY, "RESERVE_PAY");
+  assert.equal(root.PaymentMethod.RESERVE_PAY, "RESERVE_PAY");
+  assert.equal(root.PaymentMethod.UPI_RESERVE_PAY, undefined);
+  assert.equal(root.PaymentMethod.OTM, "OTM");
+  assert.equal(root.PaymentMethod.CARD, "CARD");
+  assert.equal(root.PaymentMethod.CREDIT_EMI, "CREDIT_EMI");
   assert.equal(root.PaymentMethod.Crypto, "CRYPTO");
 });

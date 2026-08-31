@@ -1,9 +1,25 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.P3PVerificationError = exports.P3PCaptureError = exports.P3PError = exports.ChargeOptions = exports.Amount = exports.PaymentMethod = exports.PaymentGateway = exports.PAYMENT_RECEIPT_PREFIX = exports.PAYMENT_HEADER_PREFIX = exports.PAYMENT_CREDENTIAL_HEADER = void 0;
+exports.P3PVerificationError = exports.P3PCaptureError = exports.P3PError = exports.PENDING_DEBIT_STATUSES = exports.ChargeOptions = exports.Amount = exports.PaymentMethod = exports.PaymentGateway = exports.GRANTEX_TOKEN_HEADER = exports.PAYMENT_RECEIPT_PREFIX = exports.PAYMENT_HEADER_PREFIX = exports.PAYMENT_CREDENTIAL_HEADER = void 0;
+__exportStar(require("./orders"), exports);
 exports.PAYMENT_CREDENTIAL_HEADER = "P3P-Credential";
 exports.PAYMENT_HEADER_PREFIX = "Payment ";
 exports.PAYMENT_RECEIPT_PREFIX = "Payment ";
+exports.GRANTEX_TOKEN_HEADER = "X-Grantex-Token";
 /** Payment gateway enum retained for capture/receipt context. */
 var PaymentGateway;
 (function (PaymentGateway) {
@@ -13,6 +29,9 @@ var PaymentGateway;
 var PaymentMethod;
 (function (PaymentMethod) {
     PaymentMethod["RESERVE_PAY"] = "RESERVE_PAY";
+    PaymentMethod["OTM"] = "OTM";
+    PaymentMethod["CARD"] = "CARD";
+    PaymentMethod["CREDIT_EMI"] = "CREDIT_EMI";
     PaymentMethod["Crypto"] = "CRYPTO";
 })(PaymentMethod || (exports.PaymentMethod = PaymentMethod = {}));
 /** Money amount expressed in the smallest unit for the currency, e.g. paise for INR. */
@@ -59,6 +78,12 @@ class ChargeOptions {
     }
 }
 exports.ChargeOptions = ChargeOptions;
+exports.PENDING_DEBIT_STATUSES = [
+    "PENDING",
+    "CREATED",
+    "OMS_PAYMENT_SUBMITTED",
+    "PROCESSING",
+];
 /** Error type raised for non-2xx P3P service responses. */
 class P3PError extends Error {
     code;

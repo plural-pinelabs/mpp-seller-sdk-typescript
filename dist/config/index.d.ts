@@ -5,12 +5,12 @@ export declare const P3PEnvironment: {
 export type P3PEnvironmentValue = typeof P3PEnvironment[keyof typeof P3PEnvironment];
 export declare const P3PEnvironmentDefaults: {
     readonly "https://pluraluat.v2.pinepg.in": {
-        readonly requestTimeoutMs: 30000;
+        readonly requestTimeoutMs: 60000;
         readonly maxRetries: 2;
         readonly initialRetryDelayMs: 300;
     };
     readonly "https://api.pluralpay.in": {
-        readonly requestTimeoutMs: 10000;
+        readonly requestTimeoutMs: 45000;
         readonly maxRetries: 2;
         readonly initialRetryDelayMs: 200;
     };

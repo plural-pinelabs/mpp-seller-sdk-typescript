@@ -6,10 +6,12 @@ import {
   PENDING_DEBIT_STATUSES,
   P3PCaptureError,
   P3PError,
+  PaymentMethod,
   PineLabsOnlineServerConfig,
 } from "../types";
 import { requestWithRetry, resolveRetryAfterDelayMs, safeJson } from "../utils/http";
 import { asRecord } from "../utils/parsers";
+import { isSupportedPaymentMethod, unsupportedPaymentMethodError } from "../utils/validation";
 import { AuthManager } from "./auth-manager";
 
 export class CaptureClient {
@@ -29,57 +31,110 @@ export class CaptureClient {
 
   /** Call `/mpp/v1/debit` with idempotency headers. */
   async capture(options: CaptureOptions): Promise<CaptureResult> {
-    resolveCustomerReference(options);
+    if (!isSupportedPaymentMethod(options.paymentMethod)) {
+      throw new P3PCaptureError(unsupportedPaymentMethodError("CaptureOptions: paymentMethod", options.paymentMethod).message);
+    }
+    if (!Number.isInteger(options.amount.value) || options.amount.value <= 0) {
+      throw new P3PCaptureError("CaptureOptions: amount.value must be a positive integer (paise)");
+    }
     const mobileNumber = resolveMobileNumber(options);
+    const paymentMethodReferenceId = resolvePaymentMethodReferenceId(options);
+    if (options.paymentMethod === PaymentMethod.CREDIT_EMI && !paymentMethodReferenceId) {
+      throw new P3PCaptureError("CaptureOptions: paymentMethodReferenceId is required for CREDIT_EMI");
+    }
     const token = await this.auth.getAccessToken();
     const idempotencyKey = options.idempotencyKey ?? options.merchantOrderReference ?? randomId();
+    const merchantOrderReference = options.merchantOrderReference?.trim() || idempotencyKey;
     const payload = {
       payment_method: options.paymentMethod,
       customer: { mobile_number: mobileNumber },
+      merchant_order_reference: merchantOrderReference,
       payment_amount: { value: options.amount.value, currency: options.amount.currency },
       payment_token: options.token,
       challenge_id: resolveChallengeId(options),
+      ...(paymentMethodReferenceId
+        ? { payment_method_reference_id: paymentMethodReferenceId }
+        : {}),
     };
     const maxRetries = this.config.maxRetries ?? 0;
     const initialRetryDelayMs = this.config.initialRetryDelayMs ?? 0;
-    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-      const response = await requestWithRetry(this.fetchImpl, `${this.baseUrl}/mpp/v1/debit`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-          "Idempotency-Key": idempotencyKey,
-        },
-        body: JSON.stringify(payload),
-      }, this.config);
 
-      if (response.status === 202) {
-        const data = normalizeCapturePayload(await safeJson(response));
-        const retryAfter = retryDelayMs(response, initialRetryDelayMs);
-        if (attempt < maxRetries) {
-          await sleep(retryAfter);
-          continue;
-        }
-        return {
-          ...data,
-          pending: true,
-          idempotencyKey,
-          message: "Debit is still processing.",
-          retryAfter,
-          payment_gateway: this.config.paymentGateway,
-        };
-      }
+    // The debit is POSTed exactly once. An in-flight async debit (HTTP 202) must
+    // NEVER be re-POSTed with the same idempotency key: Pine rejects the resubmit
+    // with 422. Instead we resolve the terminal status by polling the read-only
+    // GET /mpp/v1/debit/{id} endpoint. Genuine transient failures (network errors,
+    // HTTP 429, and 5xx) on the POST itself are still retried inside
+    // requestWithRetry, so `maxRetries` keeps protecting the initial submit.
+    const response = await requestWithRetry(this.fetchImpl, `${this.baseUrl}/mpp/v1/debit`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify(payload),
+    }, this.config);
 
-      if (!response.ok) {
-        const error = P3PError.fromResponse(response.status, await safeJson(response));
-        throw new P3PCaptureError(`Capture failed: ${error.message}`, error);
+    if (response.status === 202) {
+      const data = normalizeCapturePayload(await safeJson(response));
+      const retryAfter = retryDelayMs(response, initialRetryDelayMs);
+      // Poll the read-only debit-status endpoint up to `maxRetries` times rather
+      // than re-submitting the debit. With maxRetries === 0 no poll is attempted
+      // and the pending result is returned immediately for out-of-band resolution.
+      const resolved = await this.pollDebitStatus(idempotencyKey, retryAfter, maxRetries);
+      if (resolved) {
+        return resolved;
       }
       return {
-        ...normalizeCapturePayload(await response.json()),
+        ...data,
+        pending: true,
+        idempotencyKey,
+        message: "Debit is still processing.",
+        retryAfter,
         payment_gateway: this.config.paymentGateway,
       };
     }
-    throw new P3PCaptureError("Capture failed: debit did not complete");
+
+    if (!response.ok) {
+      const error = P3PError.fromResponse(response.status, await safeJson(response));
+      throw new P3PCaptureError(`Capture failed: ${error.message}`, error);
+    }
+    return {
+      ...normalizeCapturePayload(await response.json()),
+      payment_gateway: this.config.paymentGateway,
+    };
+  }
+
+  /**
+   * Resolve an in-flight async debit by polling `GET /mpp/v1/debit/{id}` up to
+   * `maxPolls` times, waiting `delayMs` between polls, until the debit reaches a
+   * terminal (non-pending) status. Returns the resolved `CaptureResult`, or
+   * `undefined` when it is still pending after the budget is exhausted (or when
+   * `maxPolls <= 0`).
+   *
+   * This never re-POSTs the debit and never throws: a transient status-check
+   * failure simply ends polling and lets the caller resolve the pending debit
+   * out-of-band (e.g. via a later `getDebitStatus` call), which is strictly safer
+   * than resubmitting the debit.
+   */
+  private async pollDebitStatus(
+    idempotencyKey: string,
+    delayMs: number,
+    maxPolls: number,
+  ): Promise<CaptureResult | undefined> {
+    for (let attempt = 0; attempt < maxPolls; attempt += 1) {
+      await sleep(delayMs);
+      let result: CaptureResult;
+      try {
+        result = await this.getDebitStatus(idempotencyKey);
+      } catch {
+        return undefined;
+      }
+      if (!isPendingDebitStatus(result.status)) {
+        return { ...result, idempotencyKey };
+      }
+    }
+    return undefined;
   }
 
   /** Fetch the latest debit status through `GET /mpp/v1/debit/{id}`. */
@@ -110,20 +165,16 @@ function normalizeCapturePayload(payload: unknown): Record<string, unknown> {
   return asRecord(asRecord(payload)?.data) ?? asRecord(payload) ?? {};
 }
 
-function resolveCustomerReference(options: CaptureOptions): string {
-  const customerReference = (options.customerReference ?? options.metadata?.customer_reference ?? options.metadata?.customerReference ?? "").trim();
-  if (!customerReference) {
-    throw new P3PCaptureError("CaptureOptions: customerReference is required for P3P V2 debit");
-  }
-  return customerReference;
-}
-
 function resolveMobileNumber(options: CaptureOptions): string {
-  const mobileNumber = normalizeMobileNumber(options.mobileNumber ?? options.metadata?.mobile_number ?? options.metadata?.mobileNumber ?? "");
+  const mobileNumber = normalizeMobileNumber(options.mobileNumber ?? "");
   if (!mobileNumber) {
     throw new P3PCaptureError("CaptureOptions: mobileNumber is required for P3P V2 debit");
   }
   return mobileNumber;
+}
+
+function resolvePaymentMethodReferenceId(options: CaptureOptions): string | undefined {
+  return (options.paymentMethodReferenceId ?? options.metadata?.payment_method_reference_id ?? options.metadata?.paymentMethodReferenceId ?? "").trim() || undefined;
 }
 
 function resolveChallengeId(options: CaptureOptions): string {
@@ -147,7 +198,10 @@ function stripSlash(value: string): string {
 
 function normalizeMobileNumber(value: string): string {
   const digits = value.trim().replace(/\D/g, "");
-  return digits.length >= 10 ? digits.slice(-10) : digits;
+  if (digits.length > 10) {
+    throw new P3PCaptureError(`CaptureOptions: mobileNumber must be at most 10 digits, got ${digits.length}`);
+  }
+  return digits;
 }
 
 function retryDelayMs(response: Response, fallbackMs: number): number {

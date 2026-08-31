@@ -7,17 +7,18 @@ const types_1 = require("../types");
 const base64url_1 = require("./base64url");
 /** Build structured receipt data from a successful capture result. */
 function buildReceiptData(captureResult, challengeId, context = {}) {
+    const amount = asAmount(captureResult.amount);
     const receipt = {
         status: "success",
-        timestamp: captureResult.settled_at || new Date().toISOString(),
-        reference: captureResult.capture_id,
+        timestamp: String(captureResult.settled_at || "") || new Date().toISOString(),
+        reference: String(captureResult.capture_id ?? captureResult.merchant_payment_debit_reference ?? ""),
         challengeId,
-        orderId: captureResult.order_id || null,
-        merchantOrderReference: captureResult.merchant_order_reference || null,
-        settlement: {
-            amount: (captureResult.amount.value / 100).toFixed(2),
-            currency: captureResult.amount.currency,
-        },
+        orderId: String(captureResult.order_id ?? "") || null,
+        merchantOrderReference: String(captureResult.merchant_order_reference ?? captureResult.merchant_payment_debit_reference ?? "") || null,
+        settlement: amount ? {
+            amount: (amount.value / 100).toFixed(2),
+            currency: amount.currency,
+        } : undefined,
     };
     const paymentGateway = context.paymentGateway ?? captureResult.payment_gateway;
     const paymentMethod = context.paymentMethod ?? captureResult.payment_method;
@@ -49,4 +50,15 @@ function buildFailureReceiptData(challengeId, context = {}) {
         receipt.paymentMethod = context.paymentMethod;
     }
     return receipt;
+}
+function asAmount(value) {
+    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+        const record = value;
+        const amountValue = Number(record.value);
+        const currency = record.currency;
+        if (Number.isFinite(amountValue) && typeof currency === "string") {
+            return { value: amountValue, currency };
+        }
+    }
+    return undefined;
 }

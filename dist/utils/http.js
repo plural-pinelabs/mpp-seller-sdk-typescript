@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.requestWithRetry = requestWithRetry;
 exports.safeJson = safeJson;
+exports.resolveRetryAfterDelayMs = resolveRetryAfterDelayMs;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_INITIAL_RETRY_DELAY_MS = 500;
@@ -36,6 +37,20 @@ async function safeJson(response) {
         return {};
     }
 }
+function resolveRetryAfterDelayMs(retryAfter) {
+    if (!retryAfter) {
+        return undefined;
+    }
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+        return seconds * 1000;
+    }
+    const retryAt = Date.parse(retryAfter);
+    if (Number.isFinite(retryAt)) {
+        return Math.max(0, retryAt - Date.now());
+    }
+    return undefined;
+}
 function withTimeout(init, timeoutMs) {
     if (init.signal || typeof AbortSignal === "undefined" || typeof AbortSignal.timeout !== "function") {
         return init;
@@ -43,12 +58,9 @@ function withTimeout(init, timeoutMs) {
     return { ...init, signal: AbortSignal.timeout(timeoutMs) };
 }
 function retryDelayMs(attempt, initialMs, response) {
-    const retryAfter = response?.headers.get("Retry-After");
-    if (retryAfter) {
-        const seconds = Number(retryAfter);
-        if (Number.isFinite(seconds) && seconds > 0) {
-            return seconds * 1000;
-        }
+    const retryAfterMs = resolveRetryAfterDelayMs(response?.headers.get("Retry-After"));
+    if (retryAfterMs !== undefined) {
+        return retryAfterMs;
     }
     return initialMs * 2 ** attempt;
 }

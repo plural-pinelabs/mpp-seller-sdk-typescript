@@ -59,7 +59,10 @@ export class CredentialVerifier {
       encodeJson(challenge.request),
       challenge.expires,
     );
-    if (challenge.id !== expectedId) {
+    const { timingSafeEqual } = await import("node:crypto");
+    const idBuf = Buffer.from(challenge.id);
+    const expectedBuf = Buffer.from(expectedId);
+    if (idBuf.length !== expectedBuf.length || !timingSafeEqual(idBuf, expectedBuf)) {
       return {
         valid: false,
         credential,
@@ -111,7 +114,7 @@ function dictToCredential(raw: unknown): Credential {
     payload: {
       type: "token",
       token: String(payload.token ?? ""),
-      customer_reference: stringOrUndefined(payload.customer_reference ?? payload.customerReference),
+      payment_method_reference_id: stringOrUndefined(payload.payment_method_reference_id ?? payload.paymentMethodReferenceId),
       mobile_number: stringOrUndefined(payload.mobile_number ?? payload.mobileNumber),
       payment_method: parsePaymentMethod(payload.payment_method ?? payload.paymentMethod),
     },
@@ -123,8 +126,11 @@ function parsePaymentGateway(value: unknown): Challenge["paymentGateway"] {
 }
 
 function parsePaymentMethod(value: unknown): PaymentMethod {
-  if (value === PaymentMethod.UPI_RESERVE_PAY || value === PaymentMethod.Crypto) {
+  if (value === PaymentMethod.RESERVE_PAY || value === PaymentMethod.CARD || value === PaymentMethod.CREDIT_EMI || value === PaymentMethod.Crypto) {
     return value;
+  }
+  if (value === PaymentMethod.OTM) {
+    return PaymentMethod.OTM;
   }
   return String(value ?? "") as PaymentMethod;
 }

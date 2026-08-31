@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CredentialVerifier = void 0;
 const types_1 = require("../types");
@@ -43,7 +76,10 @@ class CredentialVerifier {
             return { valid: false, credential, error: "Challenge has expired" };
         }
         const expectedId = await (0, hmac_1.computeChallengeId)(this.secretKey, challenge.realm, challenge.intent, (0, base64url_1.encodeJson)(challenge.request), challenge.expires);
-        if (challenge.id !== expectedId) {
+        const { timingSafeEqual } = await Promise.resolve().then(() => __importStar(require("node:crypto")));
+        const idBuf = Buffer.from(challenge.id);
+        const expectedBuf = Buffer.from(expectedId);
+        if (idBuf.length !== expectedBuf.length || !timingSafeEqual(idBuf, expectedBuf)) {
             return {
                 valid: false,
                 credential,
@@ -93,7 +129,7 @@ function dictToCredential(raw) {
         payload: {
             type: "token",
             token: String(payload.token ?? ""),
-            customer_reference: (0, parsers_1.stringOrUndefined)(payload.customer_reference ?? payload.customerReference),
+            payment_method_reference_id: (0, parsers_1.stringOrUndefined)(payload.payment_method_reference_id ?? payload.paymentMethodReferenceId),
             mobile_number: (0, parsers_1.stringOrUndefined)(payload.mobile_number ?? payload.mobileNumber),
             payment_method: parsePaymentMethod(payload.payment_method ?? payload.paymentMethod),
         },
@@ -103,8 +139,11 @@ function parsePaymentGateway(value) {
     return value === undefined || value === null ? undefined : String(value);
 }
 function parsePaymentMethod(value) {
-    if (value === types_1.PaymentMethod.RESERVE_PAY || value === types_1.PaymentMethod.Crypto) {
+    if (value === types_1.PaymentMethod.RESERVE_PAY || value === types_1.PaymentMethod.CARD || value === types_1.PaymentMethod.CREDIT_EMI || value === types_1.PaymentMethod.Crypto) {
         return value;
+    }
+    if (value === types_1.PaymentMethod.OTM) {
+        return types_1.PaymentMethod.OTM;
     }
     return String(value ?? "");
 }

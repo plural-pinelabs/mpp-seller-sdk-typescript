@@ -10,6 +10,7 @@ class AuthManager {
     fetchImpl;
     accessToken;
     expiresAt = 0;
+    refreshPromise;
     constructor(config, baseUrl, fetchImpl) {
         this.config = config;
         this.baseUrl = baseUrl;
@@ -20,6 +21,18 @@ class AuthManager {
         if (this.accessToken && Date.now() < this.expiresAt - 60_000) {
             return this.accessToken;
         }
+        if (this.refreshPromise) {
+            return this.refreshPromise;
+        }
+        this.refreshPromise = this.exchangeToken();
+        try {
+            return await this.refreshPromise;
+        }
+        finally {
+            this.refreshPromise = undefined;
+        }
+    }
+    async exchangeToken() {
         const response = await (0, http_1.requestWithRetry)(this.fetchImpl, `${stripSlash(this.baseUrl)}/api/auth/v1/token`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
